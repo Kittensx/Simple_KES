@@ -1,5 +1,5 @@
 k_diffusion 
 requests  
 torch  
-yaml
+PyYAML
 watchdog
