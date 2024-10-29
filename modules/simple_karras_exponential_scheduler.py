@@ -9,9 +9,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime
 import warnings
-import os
-import logging
 from datetime import datetime
+
+    
 def get_random_or_default(scheduler_config, key_prefix, default_value, global_randomize):
     """Helper function to either randomize a value based on conditions or return the default."""
     
@@ -107,15 +107,6 @@ class CustomLogger:
 
         if not any(isinstance(handler, logging.StreamHandler) for handler in self.error_logger.handlers):
             self._setup_console_handler(self.error_logger)
-
-# Usage example
-custom_logger = CustomLogger('simple_kes', print_to_console=False, debug_enabled=True)
-
-# Logging examples
-#custom_logger.log_debug("Debug message: Using default sigma_min: 0.01")
-#custom_logger.info("Info message: Step completed successfully.")
-#custom_logger.log_error("Error message: Something went wrong!")
-      
     
 class ConfigManagerYaml:
     def __init__(self, config_path):
@@ -162,12 +153,14 @@ def start_config_watcher(config_manager, config_path):
     Parameters are dynamically updated if the config file changes during execution.
 """
 # If user config is provided, update default config with user values
-config_path = "modules/simple_kes_scheduler.yaml"
-config_manager = ConfigManagerYaml(config_path)    
-
-
+# Define the correct path for the config file
+config_path = os.path.join(os.path.dirname(__file__), 'kes_config', 'simple_kes_scheduler.yaml')
+config_manager = ConfigManagerYaml(config_path) 
+  
 # Start watching for config changes
 observer = start_config_watcher(config_manager, config_path)
+
+
 
 
 def simple_karras_exponential_scheduler(
