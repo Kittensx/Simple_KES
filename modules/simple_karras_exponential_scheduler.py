@@ -11,7 +11,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # simple_karras_exponential_scheduler.py
-# Developed by KittensX#
+# Developed by KittensX
 # License: MIT License
 
 
