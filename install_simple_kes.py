@@ -65,17 +65,7 @@ def create_virtualenv(venv_path):
     venv.create(venv_path, with_pip=True)
     print(f"Virtual environment created at {venv_path}")
     
-def setup_simple_kes(modules_dir, kes_config_dir):
-    scheduler_path = modules_dir / "simple_karras_exponential_scheduler.py"
 
-    # Dynamically load simple_karras_exponential_scheduler from the modules folder
-    if scheduler_path.exists():
-        spec = importlib.util.spec_from_file_location("simple_karras_exponential_scheduler", scheduler_path)
-        scheduler_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(scheduler_module)
-        simple_karras_exponential_scheduler = scheduler_module.simple_karras_exponential_scheduler
-    else:
-        raise FileNotFoundError(f"{scheduler_path} does not exist.")
     
 def main():
     # Define paths
@@ -92,8 +82,7 @@ def main():
     requirements_filename = "simple_kes_requirements.txt"
     requirements_target_path = requirements_target_dir / requirements_filename    
     modules_dir = scheduler_target_dir
-    kes_config_dir = create_kes_config_dir()    
-    setup_simple_kes(modules_dir, kes_config_dir)  
+    kes_config_dir = create_kes_config_dir()     
     root_path = os.path.abspath(os.getcwd())
     venv_path = os.path.join(root_path, 'venv')
     fallback_venv_path = os.path.join(root_path, 'simple_kes_requirements')
