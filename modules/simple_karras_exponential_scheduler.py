@@ -9,7 +9,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime
 import warnings
-from datetime import datetime
+
 
     
 def get_random_or_default(scheduler_config, key_prefix, default_value, global_randomize):
