@@ -1,0 +1,5 @@
+Notes about randomize:
+
+If randomize is true -- all the options will underneath are randomized. this means that changing each value to true will not affect the randomizer working.
+
+If randomize is false - it checks each value underneath. If any of those values are true, it randomizes only those values. 
