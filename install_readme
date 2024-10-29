@@ -1,12 +1,14 @@
 @install_readme
-simple_kes_requirements.txt #additional modules required to run 
-install_simple_kes.py #this file contains the code necessary to read the requirements.txt file and install necessary dependancies
-install_simple_kes.bat #This file runs the install_simple_kes.py file which will install the requirements into the venv folder (if found) or into the 'fallback_venv_path' which is "simple_kes_requirements". Move from the modules from fallback_venv_path to your venv folder if it does not install into "venv"
+install_simple_kes.py #this file contains the code necessary to read the requirements.txt file and install necessary dependancies, as well as download the scheduler files and config.
+install_simple_kes.bat #This file runs the install_simple_kes.py file which will install the requirements into the venv folder (if found) or into the 'fallback_venv_path' which is "simple_kes_requirements". Move from the modules from fallback_venv_path to your venv folder if it does not install into "venv". It executes the code in the install_simple_kes.py file.
 Install the above files into the root folder where you have installed Stable Diffusion. It should be located in the same location as webui.bat.
 
 
-1. Run install_simple_kes.bat to install the dependancies. 
-2. Ensure that sd_schedulers.py has been updated and is located inside ./modules/
-3. Ensure that simple_karras_exponential_scheduler.py and simple_kes_scheduler.yaml are inside the modules folder.
+1. Run install_simple_kes.bat to install the dependancies, and download the scheduler, config, and requirements into their respective folders. 
+2. Ensure that sd_schedulers.py has been updated with the lines inside the Readme file under "setup". It is located inside ./modules/
+3. Ensure that simple_karras_exponential_scheduler.py is inside the modules folder, and and simple_kes_scheduler.yaml is inside the modules/kes_config folder.
+4. Enjoy!
 
-For troubleshooting "watchdog" see troubleshoot_watchdog . Essentially, you can try to reinstall all your requirements. Ensure that you add the simple_kes_requirements to the requirements.txt file.
+Ensure that you run install_simple_kes.bat or run from cmd: Python install_simple_kes.py , as this will execute the installation of requirements into the venv folder.
+
+For troubleshooting "watchdog" see troubleshoot_watchdog . Essentially, you can try to reinstall all your requirements. Ensure that you merge the simple_kes_requirements.txt (install location is ./modules/kes_config) to the requirements.txt file, and then run the A1111 setup. 
