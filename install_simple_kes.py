@@ -7,7 +7,6 @@ import requests
 from functools import partial
 import importlib.util
 
-    
 def create_kes_config_dir():
     
     root_dir = Path(__file__).parent.resolve()  
@@ -32,8 +31,6 @@ def download_and_install_file(url, target_dir, filename):
         file.write(response.content)
 
     print(f"Downloaded and installed {filename} to {target_path}")
-    
-
     
 def install_requirements(venv_path, requirements_github_url, requirements_target_dir, requirements_filename):
     """Install requirements into the specified virtual environment."""
@@ -80,8 +77,6 @@ def setup_simple_kes(modules_dir, kes_config_dir):
     else:
         raise FileNotFoundError(f"{scheduler_path} does not exist.")
     
-   
-    
 def main():
     # Define paths
     scheduler_github_url = "https://raw.githubusercontent.com/Kittensx/Simple_KES/refs/heads/main/modules/simple_karras_exponential_scheduler.py"
@@ -123,9 +118,6 @@ def main():
         print(f"{requirements_filename} already exists. Installing requirements.")
         install_requirements(venv_path, requirements_github_url, requirements_target_dir, requirements_filename) 
 
-    
-    
-    
     # Virtual environment setup and requirements installation
     if os.path.isdir(venv_path):
         print(f"'venv' folder found at {venv_path}")
@@ -135,8 +127,6 @@ def main():
         if not os.path.isdir(fallback_venv_path):
             create_virtualenv(fallback_venv_path)
         install_requirements(fallback_venv_path, requirements_github_url, requirements_target_dir, requirements_filename)
-    
-    
 
 if __name__ == "__main__":   
     main()
