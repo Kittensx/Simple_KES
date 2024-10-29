@@ -7,6 +7,8 @@ import random
 from datetime import datetime
 import warnings
 import logging
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # simple_karras_exponential_scheduler.py
 # Developed by KittensX#
