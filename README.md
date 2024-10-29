@@ -6,7 +6,7 @@ The Simple Karras Exponential Scheduler dynamically blends Karras (smooth noise 
 Uploaded to: https://github.com/Kittensx 
 
 ## Last Updated:
-10/27/2024
+10/29/2024
 
 # Simple Karras Exponential Scheduler (Simple KES)
 The Simple Karras Exponential Scheduler (Simple KES) is a dynamic image generation tool that combines Karras and Exponential noise scheduling methods to produce high-quality, detailed images with smooth transitions. This scheduler leverages the strengths of each method: Karras for smooth noise reduction and Exponential for faster noise decay. Through this blending approach, Simple KES offers enhanced control and adaptability, resulting in refined and versatile images suited for artistic and experimental applications.
@@ -23,11 +23,12 @@ Optimizes processing time and image detail by sharpening selectively based on si
 Powered by Watchdog, this feature enables on-the-fly adjustments to configurations, making it ideal for workflows that require frequent experimentation and fine-tuning.
 
 # Installation
-1.	Install the scheduler and configuration file inside the modules folder in Automatic1111.
-2.	Ensure that the sd_schedulers.py is updated to include this line inside schedulers[] and import it at the top (or replace the file as needed with the given file – updated as version 1.10)
-
-import modules.simple_karras_exponential_scheduler as simple_kes
-Scheduler('karras_exponential', 'Karras Exponential', simple_kes.simple_karras_exponential_scheduler),
+1.	Download install_simple_kes.py and install_simple_kes.bat and place in root folder of A1111. 
+2. 	Run install_simple_kes.bat. This will download from github the scheduler and place into the modules folder, and will download the configuration files and place into kes_config folder inside the modules folder. If you want to make configuration changes while A1111 is running, modify the config files inside that folder: root\modules\kes_config\simple_kes_scheduler.yaml
+3.	Ensure that the sd_schedulers.py is updated to include this line inside schedulers[] and import it at the top (or replace the file as needed with the given file – updated as version 1.10)
+		import modules.simple_karras_exponential_scheduler as simple_kes
+		Scheduler('karras_exponential', 'Karras Exponential', simple_kes.simple_karras_exponential_scheduler),
+4. 	Run A1111. If you've completed steps 1-3 you should now see Karras Exponential in the available schedulers. 
 
 For version 1.10 you can replace the files found in “modules\”  if preferred.
 See the scheduler requirements. This file uses watchdog which monitors changes in files. So if you wanted to do a config change to the yaml file you could do so without needing to restart the program, since watchdog will monitor changes then trigger a reload of the config file. For more information, see “Watchdog”
