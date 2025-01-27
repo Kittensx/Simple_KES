@@ -31,7 +31,7 @@ class SchedulerConfig:
         noise_scale_factor: Adjust to provide more variation
     '''
     
-    n: int = field (default=30)
+    n: int
     device: str = field(default_factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
     user_config: dict = None   
     
@@ -143,7 +143,7 @@ class SchedulerConfig:
 class SimpleKarrasExponentialScheduler(SchedulerMixin):
     def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02, config_path="modules\kes_config\simple_kes_scheduler.yaml", user_config=None):
         super().__init__()        
-        self.scheduler_config = SchedulerConfig()
+        self.scheduler_config = SchedulerConfig(n=n)
         self.config_path = config_path       
         config_dict = self.load_config('scheduler', {})
         self.config = SchedulerConfig.from_dict(config_dict)
@@ -168,9 +168,10 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
             print(f"Warning: Configuration file {self.config_path} not found. Using default values.")
             return default
 
-    def get_sigmas(self):
+    def get_sigmas(self, n=None):
         """Generate sigmas based on exponential Karras schedule."""
         # Expand sigma_max slightly to account for smoother transitions
+        n = n if n is not None else getattr(self.config, 'n', self.num_train_timesteps)    
         sigma_max = self.config.sigma_max * 1.1
         sigma_min = self.config.sigma_min        
         
@@ -185,15 +186,19 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
         # Handle potential NaN or infinite values
         if torch.isnan(sigmas).any() or torch.isinf(sigmas).any():
             raise ValueError("Invalid values detected in sigmas. Check scheduler settings.")
-       
+        
+        print(f"Generating sigmas with steps: {n}, sigma_min: {self.config.sigma_min}, sigma_max: {self.config.sigma_max}")
+        print(f"Generated sigmas: {sigmas}")
+
         return sigmas
 
-    def set_timesteps(self, num_inference_steps):
+    def set_timesteps(self, num_inference_steps, n=None):
         """Set timesteps for inference based on the configured number of steps."""
+        n = n if n is not None else getattr(self.config, 'n', self.num_inference_steps)  
         self.timesteps = torch.linspace(0, self.num_train_timesteps - 1, num_inference_steps).to(torch.int64)
         self.sigmas = self.get_sigmas()[self.timesteps]
 
-    def step(self, model_output, timestep, sample,**kwargs):
+    def step(self, model_output, timestep, sample, n=None, **kwargs):
         """
         Perform one step in the denoising process.
 
@@ -205,6 +210,7 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
         Returns:
             Denoised sample after applying the custom scheduler step.
         """
+        n = n if n is not None else getattr(self.config, 'n', self.timestep)  
         sigma = self.sigmas[timestep]
 
         # Apply noise correction based on the current timestep sigma
@@ -212,8 +218,9 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
 
         return denoised_sample
 
-    def scale_model_input(self, sample, timestep):
+    def scale_model_input(self, sample, timestep, n=None):
         """Scale the input sample according to the sigma schedule."""
+        n = n if n is not None else getattr(self.config, 'n', self.timestep) 
         return sample / (1.0 + self.sigmas[timestep])
     
     @staticmethod
@@ -313,7 +320,18 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
         target_length = min(len(sigmas_karras), len(sigmas_exponential))  
         sigmas_karras = sigmas_karras[:target_length]
         sigmas_exponential = sigmas_exponential[:target_length]
-                  
+        # Ensure the final length matches `n`
+        if len(sigmas_karras) < n:
+            # If sequences are shorter than `n`, pad with the last value
+            padding_karras = torch.full((n - len(sigmas_karras),), sigmas_karras[-1]).to(sigmas_karras.device)
+            sigmas_karras = torch.cat([sigmas_karras, padding_karras])
+
+            padding_exponential = torch.full((n - len(sigmas_exponential),), sigmas_exponential[-1]).to(sigmas_exponential.device)
+            sigmas_exponential = torch.cat([sigmas_exponential, padding_exponential])
+        elif len(sigmas_karras) > n:
+            # If sequences are longer than `n`, truncate to `n`
+            sigmas_karras = sigmas_karras[:n]
+            sigmas_exponential = sigmas_exponential[:n]
         
         if sigmas_karras is None:
             raise ValueError("Sigmas Karras:{sigmas_karras} Failed to generate or assign sigmas correctly.")
