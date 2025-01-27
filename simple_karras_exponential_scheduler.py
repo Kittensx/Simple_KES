@@ -152,24 +152,13 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
                 if key in self.config.__dataclass_fields__:
                     setattr(self.config, key, value)
 
-       
-        
-
         # Set scheduler parameters from config or defaults
         self.num_train_timesteps = getattr(self.config, 'n', num_train_timesteps)
         self.beta_start = getattr(self.config, 'beta_start', beta_start)
         self.beta_end = getattr(self.config, 'beta_end', beta_end)
-
-
         self.timesteps = torch.linspace(0, 1, self.num_train_timesteps)
-        self.sigmas = self.get_sigmas()
-        
-       
-        
-
-
-
-
+        self.sigmas = self.get_sigmas()       
+	    
     def load_config(self, section, default):
         try:
             with open(self.config_path, "r") as f:
@@ -178,7 +167,6 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
         except FileNotFoundError:
             print(f"Warning: Configuration file {self.config_path} not found. Using default values.")
             return default
-
 
     def get_sigmas(self):
         """Generate sigmas based on exponential Karras schedule."""
@@ -192,8 +180,7 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
         sigmas = (1.0 - alpha_cumprod) / (alpha_cumprod**0.5)
         if self.config.sigma_min >= self.config.sigma_max:
             raise ValueError("sigma_min should be less than sigma_max. Check configuration.")
-            #!! instead of raise, let's set sigma_min to default
-
+           
 
         # Handle potential NaN or infinite values
         if torch.isnan(sigmas).any() or torch.isinf(sigmas).any():
@@ -285,9 +272,7 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
             rand_max = getattr(config, f"{key_prefix}_rand_max", default_value * 1.25)
         if randomize_flag:
             return random.uniform(rand_min, rand_max)
-        return default_value
-    
-   
+        return default_value   
     
     def simple_karras_exponential_scheduler(self, n=None, steps=None, device=None, user_config=None, **kwargs):    
         """
@@ -314,10 +299,8 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
             torch.Tensor: A tensor of blended sigma values.
         """
         # Use provided steps if given, otherwise default to config or fallback value
-        n = steps if steps is not None else getattr(self.config, 'n', 30)
-        
-        #for A1111 / Forge compatibility
-        #n = n if n is not None else getattr(self.config, 'n', 30)
+        n = steps if steps is not None else getattr(self.config, 'n', 30)        
+       
         device = "cuda" if device is not None else getattr(self.config, 'device', "cuda")
        
         
@@ -377,7 +360,3 @@ class SimpleKarrasExponentialScheduler(SchedulerMixin):
             raise ValueError("Invalid sigma values detected (NaN or Inf).")
 
         return sigs.to(device)
-        
-        
-        
-        
