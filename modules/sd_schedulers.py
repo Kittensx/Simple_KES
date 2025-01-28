@@ -140,7 +140,7 @@ schedulers = [
     Scheduler('normal', 'Normal', normal_scheduler, need_inner_model=True),
     Scheduler('ddim', 'DDIM', ddim_scheduler, need_inner_model=True),
     Scheduler('beta', 'Beta', beta_scheduler, need_inner_model=True),
-    Scheduler('karras_exponential', 'Karras Exponential', lambda n, **kwargs: simple_kes.SimpleKarrasExponentialScheduler().simple_karras_exponential_scheduler(n=n, **kwargs))
+    Scheduler('karras_exponential', 'Karras Exponential', simple_kes.simple_karras_exponential_scheduler)
 , 
 ]
 
