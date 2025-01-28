@@ -1,2 +1,0 @@
-@readme
-To use Simple_KES (Simpel Karras Exponential Scheduler) it needs to be found in the list of schedulers. You can replace your existing file with this one, or modify the python code directly to add the necessary lines. 
