@@ -353,7 +353,16 @@ def simple_karras_exponential_scheduler(
     sigs = torch.zeros_like(sigmas_karras).to(device)
     custom_logger.info(f"Sigs created {sigs}")
     custom_logger.info(f"Sigs Using device: {device}")
-
+    
+    #Pads each length if short to ensure that they are the same length at all times.  
+    if len(sigmas_karras) < len(sigmas_exponential):
+        # Pad `sigmas_karras` with the last value
+        padding_karras = torch.full((len(sigmas_exponential) - len(sigmas_karras),), sigmas_karras[-1]).to(sigmas_karras.device)
+        sigmas_karras = torch.cat([sigmas_karras, padding_karras])
+    elif len(sigmas_karras) > len(sigmas_exponential):
+        # Pad `sigmas_exponential` with the last value
+        padding_exponential = torch.full((len(sigmas_karras) - len(sigmas_exponential),), sigmas_exponential[-1]).to(sigmas_exponential.device)
+        sigmas_exponential = torch.cat([sigmas_exponential, padding_exponential])
     # Iterate through each step, dynamically adjust blend factor, step size, and noise scaling
     for i in range(len(sigmas_karras)):
         # Adaptive step size and blend factor calculations
