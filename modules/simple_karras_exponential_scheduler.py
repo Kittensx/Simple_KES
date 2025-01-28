@@ -141,9 +141,9 @@ class SchedulerConfig:
     '''
 
 class SimpleKarrasExponentialScheduler(SchedulerMixin):
-    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02, config_path="modules\kes_config\simple_kes_scheduler.yaml", user_config=None):
+    def __init__(self, num_train_timesteps=1000, beta_start=0.0001, beta_end=0.02, config_path="modules\kes_config\simple_kes_scheduler.yaml", user_config=None, n=None):
         super().__init__()        
-        self.scheduler_config = SchedulerConfig(n=n)
+        
         self.config_path = config_path       
         config_dict = self.load_config('scheduler', {})
         self.config = SchedulerConfig.from_dict(config_dict)
