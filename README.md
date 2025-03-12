@@ -6,7 +6,14 @@ The Simple Karras Exponential Scheduler dynamically blends Karras (smooth noise 
 Uploaded to: https://github.com/Kittensx 
 
 ## Last Updated:
-10/29/2024
+3/12/2025
+
+# Update Log
+Found a flaw in how some sigmas were being calculated. Ensured that sigmas were being set to minimum thresholds as a safe fallback.
+Fixed some problems with randomization not working.
+
+Added a print statement on line 422 to print the sigma_min and sigma_max. Comment this line out if you don't want it.
+
 
 # Simple Karras Exponential Scheduler (Simple KES)
 The Simple Karras Exponential Scheduler (Simple KES) is a dynamic image generation tool that combines Karras and Exponential noise scheduling methods to produce high-quality, detailed images with smooth transitions. This scheduler leverages the strengths of each method: Karras for smooth noise reduction and Exponential for faster noise decay. Through this blending approach, Simple KES offers enhanced control and adaptability, resulting in refined and versatile images suited for artistic and experimental applications.
