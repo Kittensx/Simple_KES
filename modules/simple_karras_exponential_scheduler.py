@@ -11,8 +11,14 @@ import warnings
 import os
 import logging
 from datetime import datetime
+from modules import shared_state, devices
+import math
+
+
 # If user config is provided, update default config with user values
 config_path = os.path.join(os.path.dirname(__file__), 'kes_config', 'simple_kes_scheduler.yaml')
+
+        
 
 def get_random_or_default(scheduler_config, key_prefix, default_value, global_randomize):
     """Helper function to either randomize a value based on conditions or return the default."""
@@ -170,12 +176,32 @@ config_manager = ConfigManagerYaml(config_path)
 # Start watching for config changes
 #observer = start_config_watcher(config_manager, config_path)
 
+state= shared_state.State()
+
+current_device = devices.get_optimal_device()
+device =current_device
+
+
+# Access total steps
+n = state.sampling_steps
+
+
+
+   
+
+
 
 def simple_karras_exponential_scheduler(
     n, device, sigma_min=0.01, sigma_max=50, start_blend=0.1, end_blend=0.5, 
     sharpness=0.95, early_stopping_threshold=0.01, update_interval=10, initial_step_size=0.9, 
-    final_step_size=0.2, initial_noise_scale=1.25, final_noise_scale=0.8, smooth_blend_factor=11, step_size_factor=0.8, noise_scale_factor=0.9, randomize=False, user_config=None
-):    
+    final_step_size=0.2, initial_noise_scale=1.25, final_noise_scale=0.8, smooth_blend_factor=11, step_size_factor=0.8, noise_scale_factor=0.9, randomize=False, user_config=None,
+):   
+    
+    
+
+    # Access current step
+    current_n = state.sampling_step
+   
     """
     Scheduler function that blends sigma sequences using Karras and Exponential methods with adaptive parameters.
 
@@ -199,6 +225,7 @@ def simple_karras_exponential_scheduler(
     Returns:
         torch.Tensor: A tensor of blended sigma values.
     """
+   
     config_path = os.path.join(os.path.dirname(__file__), 'simple_kes_scheduler.yaml')
     config = config_manager.load_config()
     scheduler_config = config.get('scheduler', {})
@@ -227,48 +254,49 @@ def simple_karras_exponential_scheduler(
         "step_size_factor": 0.8, #suggested value to avoid oversmoothing
         "noise_scale_factor": 0.9, #suggested value to add more variation 
         "randomize": False,
-        "sigma_min_rand": False,
+        "sigma_min_rand": False, #add this to determine whether this is randomized
         "sigma_min_rand_min": 0.001,
         "sigma_min_rand_max": 0.05,
-        "sigma_max_rand": False,
+        "sigma_max_rand": False, #add this to determine whether this is randomized
         "sigma_max_rand_min": 0.05,
         "sigma_max_rand_max": 0.20,
-        "start_blend_rand": False,
+        "start_blend_rand": False, #add this to determine whether this is randomized
         "start_blend_rand_min": 0.05,
         "start_blend_rand_max": 0.2, 
-        "end_blend_rand": False,
+        "end_blend_rand": False, #add this to determine whether this is randomized
         "end_blend_rand_min": 0.4,
         "end_blend_rand_max": 0.6,
-        "sharpness_rand": False,
+        "sharpness_rand": False, #add this to determine whether this is randomized
         "sharpness_rand_min": 0.85,
         "sharpness_rand_max": 1.0,
-        "early_stopping_rand": False,
+        "early_stopping_rand": False, #add this to determine whether this is randomized
         "early_stopping_rand_min": 0.001,
         "early_stopping_rand_max": 0.02,
-        "update_interval_rand": False,
+        "update_interval_rand": False, #add this to determine whether this is randomized
         "update_interval_rand_min": 5,
         "update_interval_rand_max": 10,
-        "initial_step_rand": False,
+        "initial_step_rand": False, #add this to determine whether this is randomized
         "initial_step_rand_min": 0.7,
         "initial_step_rand_max": 1.0,
-        "final_step_rand": False,
+        "final_step_rand": False, #add this to determine whether this is randomized
         "final_step_rand_min": 0.1,
         "final_step_rand_max": 0.3,
-        "initial_noise_rand": False,
+        "initial_noise_rand": False, #add this to determine whether this is randomized
         "initial_noise_rand_min": 1.0,
         "initial_noise_rand_max": 1.5,
-        "final_noise_rand": False,
+        "final_noise_rand": False, #add this to determine whether this is randomized
         "final_noise_rand_min": 0.6,
         "final_noise_rand_max": 1.0,
-        "smooth_blend_factor_rand": False,
+        "smooth_blend_factor_rand": False, #add this to determine whether this is randomized
         "smooth_blend_factor_rand_min": 6,    
         "smooth_blend_factor_rand_max": 11,   
-        "step_size_factor_rand": False,
+        "step_size_factor_rand": False, #add this to determine whether this is randomized
         "step_size_factor_rand_min": 0.65,
         "step_size_factor_rand_max": 0.85,   
-        "noise_scale_factor_rand": False,
+        "noise_scale_factor_rand": False, #add this to determine whether this is randomized
         "noise_scale_factor_rand_min": 0.75,
-        "noise_scale_factor_rand_max": 0.95,    
+        "noise_scale_factor_rand_max": 0.95,  
+        "print_random_values": False, #add this function to print the print statement for Randomized Values
     }    
     custom_logger.info(f"Default Config create {default_config}")
     config = config_manager.load_config().get('scheduler', {})
@@ -316,12 +344,82 @@ def simple_karras_exponential_scheduler(
     noise_scale_factor = get_random_or_default(config, 'noise_scale_factor', noise_scale_factor, global_randomize)
     
        
-    # Expand sigma_max slightly to account for smoother transitions
-    sigma_max = sigma_max * 1.1
+    def start_sigmas_karras(n, sigma_min, sigma_max, device):
+        """Retrieve randomized sigma_min and sigma_max for Karras using the existing structured randomizer."""
+        
+        sigma_min = get_random_or_default(config, 'sigma_min', sigma_min, global_randomize)
+        sigma_max = get_random_or_default(config, 'sigma_max', sigma_max, global_randomize)
+
+        if sigma_min >= sigma_max:
+            sigma_min = random.uniform(0.001, 0.05)  # Ensure sigma_min < sigma_max
+
+            custom_logger.info(f"Karras Adjusted sigma_min={sigma_min}, sigma_max={sigma_max}")
+            print(f"Debugging Karras: sigma_min={sigma_min}, sigma_max={sigma_max}")
+
+        return n, sigma_min, sigma_max, device
+
+
+
+    
+    def start_sigmas_exponential(n, sigma_min, sigma_max, device):
+        """Retrieve randomized sigma_min and sigma_max for Exponential using the existing structured randomizer."""
+
+        sigma_min = get_random_or_default(config, 'sigma_min', sigma_min, global_randomize)
+        sigma_max = get_random_or_default(config, 'sigma_max', sigma_max, global_randomize)
+
+        if sigma_min >= sigma_max:
+            sigma_min = random.uniform(0.001, 0.05)
+
+            custom_logger.info(f"Exponential Adjusted sigma_min={sigma_min}, sigma_max={sigma_max}")
+            print(f"Debugging Exponential: sigma_min={sigma_min}, sigma_max={sigma_max}")       
+
+        return n, sigma_min, sigma_max, device 
+    
+    # Ensure sigma_min and sigma_max are safe for log operation
+    min_threshold = random.uniform(1e-5, 5e-5)  # A small positive value to avoid log(0)
+    sigma_min = max(sigma_min, min_threshold)
+    sigma_max = max(sigma_max, min_threshold)
+
+    # Ensure sigma_min < sigma_max to prevent issues
+    if sigma_min >= sigma_max:
+        rand_a, rand_b = 0.01, 0.99        
+        random_rand = random.uniform(rand_a, rand_b)
+        old_sigma_min = sigma_min  # Store old value for debugging
+        sigma_min = sigma_max * random_rand  # Ensure sigma_min is always smaller than sigma_max
+
+        custom_logger.warning(
+            f"Invalid sigma range detected! Adjusted sigma_min (was {old_sigma_min}) to {sigma_min} "
+            f"using random factor {random_rand} to maintain sigma_min < sigma_max."
+        )
+        print(
+            f"Debugging Warning: sigma_min was greater than sigma_max! Adjusted it using {random_rand}. "
+            f"New sigma_min={sigma_min}, sigma_max={sigma_max}"
+        )
+
+    # Now it's safe to compute sigmas
+    sigmas = torch.linspace(math.log(sigma_max), math.log(sigma_min), n, device=device).exp()
+
+    # Ensure sigmas contain valid values before using them
+    if torch.any(sigmas > 0):  
+        sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
+        custom_logger.info(f"Using computed sigma values: sigma_min={sigma_min}, sigma_max={sigma_max}")
+        #print(f"Debugging: Computed sigma values -> sigma_min={sigma_min}, sigma_max={sigma_max}")
+    else:
+        # If sigmas are all invalid, set a safe fallback
+        sigma_min, sigma_max = min_threshold, min_threshold  
+        custom_logger.warning(f"No positive sigma values found! Using fallback: sigma_min={sigma_min}, sigma_max={sigma_max}")
+        print(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={sigma_min}, sigma_max={sigma_max}")
+
+
+   
     custom_logger.info(f"Using device: {device}")
     # Generate sigma sequences using Karras and Exponential methods
+    start_sigmas_exponential(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
+    start_sigmas_karras(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
+    
     sigmas_karras = get_sigmas_karras(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
-    sigmas_exponential = get_sigmas_exponential(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
+    sigmas_exponential = get_sigmas_exponential(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device) 
+    print(f"Randomized Values: sigma_min={sigma_min}, sigma_max={sigma_max}")
     config = config_manager.config_data.get('scheduler', {})            
     # Match lengths of sigma sequences
     target_length = min(len(sigmas_karras), len(sigmas_exponential))  
@@ -329,6 +427,10 @@ def simple_karras_exponential_scheduler(
     sigmas_exponential = sigmas_exponential[:target_length]
               
     custom_logger.info(f"Generated sigma sequences. Karras: {sigmas_karras}, Exponential: {sigmas_exponential}")
+    
+    
+  
+    
     if sigmas_karras is None:
         raise ValueError("Sigmas Karras:{sigmas_karras} Failed to generate or assign sigmas correctly.")
     if sigmas_exponential is None:    
@@ -344,6 +446,9 @@ def simple_karras_exponential_scheduler(
         #observer.stop()
         #observer.join()
         custom_logger.info(f".")
+    
+     # Expand sigma_max slightly to account for smoother transitions  
+    sigma_max = sigma_max * 1.1
   
     # Define progress and initialize blend factor
     progress = torch.linspace(0, 1, len(sigmas_karras)).to(device)
@@ -353,8 +458,9 @@ def simple_karras_exponential_scheduler(
     sigs = torch.zeros_like(sigmas_karras).to(device)
     custom_logger.info(f"Sigs created {sigs}")
     custom_logger.info(f"Sigs Using device: {device}")
+
+    # Iterate through each step, dynamically adjust blend factor, step size, and noise scaling
     
-    #Pads each length if short to ensure that they are the same length at all times.  
     if len(sigmas_karras) < len(sigmas_exponential):
         # Pad `sigmas_karras` with the last value
         padding_karras = torch.full((len(sigmas_exponential) - len(sigmas_karras),), sigmas_karras[-1]).to(sigmas_karras.device)
@@ -363,8 +469,9 @@ def simple_karras_exponential_scheduler(
         # Pad `sigmas_exponential` with the last value
         padding_exponential = torch.full((len(sigmas_karras) - len(sigmas_exponential),), sigmas_exponential[-1]).to(sigmas_exponential.device)
         sigmas_exponential = torch.cat([sigmas_exponential, padding_exponential])
-    # Iterate through each step, dynamically adjust blend factor, step size, and noise scaling
-    for i in range(len(sigmas_karras)):
+   
+    for i in range(len(sigmas_karras)):    
+              
         # Adaptive step size and blend factor calculations
         step_size = initial_step_size * (1 - progress[i]) + final_step_size * progress[i] * step_size_factor  # 0.8 default value Adjusted to avoid over-smoothing
         custom_logger.info(f"Step_size created {step_size}"   )
