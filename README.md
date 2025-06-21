@@ -139,7 +139,7 @@ See `proof it works.png` for a sample confirmation that the scheduler executes a
 
 ## 📜 License
 
-MIT License (or whichever you prefer). Customize as needed.
+MIT License 
 
 ---
 
