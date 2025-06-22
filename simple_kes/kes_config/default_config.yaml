@@ -3,7 +3,7 @@ rho: 7.00
 rho_rand: false
 rho_rand_min: 5.00
 rho_rand_max: 10.00
-sigma_min: 0.01
+sigma_min: 1.0
 sigma_max: 50.0
 start_blend: 0.1
 end_blend: 0.5
@@ -19,11 +19,11 @@ step_size_factor: 0.80
 noise_scale_factor: 0.90
 global_randomize: true
 sigma_min_rand: false
-sigma_min_rand_min: 0.001
-sigma_min_rand_max: 0.05
+sigma_min_rand_min: 1.0
+sigma_min_rand_max: 25.0
 sigma_max_rand: false
-sigma_max_rand_min: 0.05
-sigma_max_rand_max: 0.2
+sigma_max_rand_min: 10.0
+sigma_max_rand_max: 60.0
 start_blend_rand: false
 start_blend_rand_min: 0.05
 start_blend_rand_max: 0.2
