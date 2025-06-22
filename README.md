@@ -12,6 +12,9 @@ _A blend of Karras & Exponential scheduling with adaptive, randomized control._
 This scheduler is highly configurable, supports structured randomization, and was built for developers and users who want fine-tuned control or experimental behavior beyond standard sampling techniques.
 
 ---
+## Supported Stable Diffusion Projects (so far)
+ - Automatic A1111 (for install click on 'A1111 - simple_kes' then follow the installation instructions
+---
 
 ## 🚀 Features
 
