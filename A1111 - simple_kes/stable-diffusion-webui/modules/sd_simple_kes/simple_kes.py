@@ -111,7 +111,7 @@ class SimpleKEScheduler:
         self.save_generation_settings()
       
     def save_generation_settings(self):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         folder = os.path.join("modules", "sd_simple_kes", "image_generation_data")
         folder = os.path.abspath(os.path.normpath(folder))
         os.makedirs(folder, exist_ok=True)
