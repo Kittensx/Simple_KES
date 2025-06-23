@@ -13,7 +13,7 @@ This scheduler is highly configurable, supports structured randomization, and wa
 
 ---
 ## Supported Stable Diffusion Projects (so far)
- - Automatic A1111 (for install click on 'A1111 - simple_kes' then follow the installation instructions
+ - Automatic A1111 (for install click on 'A1111 - simple_kes' then follow the installation instructions)
  - Forge WebUi (for install click on Forge, then follow the installation instructions)
 ---
 
