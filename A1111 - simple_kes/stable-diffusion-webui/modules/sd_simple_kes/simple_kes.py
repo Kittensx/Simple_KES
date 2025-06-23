@@ -10,8 +10,6 @@ import math
 from typing import Optional
 import json
 
-
-
 logger = logging.getLogger("simple_kes")
 def simple_kes_scheduler(n: int, sigma_min: float, sigma_max: float, device: torch.device) -> torch.Tensor:
     scheduler = SimpleKEScheduler(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
@@ -27,14 +25,11 @@ class SimpleKEScheduler:
 
     Parameters:
     - steps (int): Number of inference steps.
+    - sigma_min (optional)
+    - sigma_max (optional)
     - device (torch.device): Target device (e.g. 'cuda').
-    - config (dict): Scheduler-specific configuration options.
-
-    Usage:
-        scheduler = SimpleKEScheduler(steps=30, device='cuda', config=config_dict)
-        sigmas = scheduler.get_sigmas()
-    """
     
+    """
     
     def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cuda", **kwargs)->torch.Tensor:  
         
@@ -46,17 +41,15 @@ class SimpleKEScheduler:
         # Temporarily hold overrides from kwargs
         self._overrides = kwargs.copy()
         
-        self.config_path_1 = os.path.join("modules", "sd_simple_kes", "kes_config", "default_config.yaml")
-        self.config_path = os.path.abspath(os.path.normpath(self.config_path_1))
+        self.config_path = os.path.abspath(os.path.normpath(os.path.join("modules", "sd_simple_kes", "kes_config", "default_config.yaml")))
+
         
         self.config_data = self.load_config()
-        self.cofing = self.config_data
-            
+        self.config = self.config_data
         
-
-       
         self.config = self.config_data.copy()
         self.settings = self.config.copy() 
+        self.log_buffer = []
         
         # Apply overrides from kwargs if present
         for k, v in self._overrides.items():
@@ -109,39 +102,28 @@ class SimpleKEScheduler:
             raise ValueError("[SimpleKEScheduler] Sigma values are extremely large — might explode the model")
 
         self.save_generation_settings()
+
         return sigmas
       
     def save_generation_settings(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         folder = os.path.join("modules", "sd_simple_kes", "image_generation_data")
-        folder = os.path.abspath(os.path.normpath(folder))
         os.makedirs(folder, exist_ok=True)
-        filename = os.path.join(folder, f"settings_{timestamp}.txt")
-
-        # Use your settings dict plus computed values
-        data = {
-            "steps": self.steps,
-            "sigma_min": self.sigma_min,
-            "sigma_max": self.sigma_max,
-            "rho": getattr(self, "rho", None),
-            "device": str(self.device),
-            "debug": getattr(self, "debug", False),
-            "config_path": getattr(self, "config_path", ""),
-        }
-
-        # Add all self.settings keys (if you want full config)
-        data.update({f"config__{k}": v for k, v in self.settings.items()})
+        filename = os.path.join(folder, f"generation_log_{timestamp}.txt")
 
         with open(filename, "w") as f:
-            for key, value in data.items():
-                f.write(f"{key}: {value}\n")
+            for line in self.log_buffer:
+                f.write(f"{line}\n")
 
-        self.log(f"Saved config to: {filename}")
+        print(f"[SimpleKEScheduler] Generation log saved to {filename}")
+        self.log_buffer.clear()  # Reset for next generation
+
+        
 
     
     def log(self, message):
         if getattr(self, "debug", False):  # fallback False if not set
-            logger.info(message)
+            self.log_buffer.append(message)
 
     
     def load_config(self):
@@ -409,8 +391,7 @@ class SimpleKEScheduler:
         
         if torch.isnan(sigs).any() or torch.isinf(sigs).any():
             raise ValueError("Invalid sigma values detected (NaN or Inf).")
+            
 
         return sigs.to(self.device)
-       
-
-
+    
