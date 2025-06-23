@@ -109,6 +109,7 @@ class SimpleKEScheduler:
             raise ValueError("[SimpleKEScheduler] Sigma values are extremely large — might explode the model")
 
         self.save_generation_settings()
+        return sigmas
       
     def save_generation_settings(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
