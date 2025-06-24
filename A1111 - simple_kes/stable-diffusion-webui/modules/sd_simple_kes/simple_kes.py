@@ -51,9 +51,16 @@ class SimpleKEScheduler:
     
     def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cuda", logger=None, **kwargs)->torch.Tensor:         
         self.steps = n if n is not None else 25         
-        self.device = torch.device(device if isinstance(device, str) else device)
+        self.device = torch.device(device if isinstance(device, str) else device)        
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
+        
+        self.RANDOMIZATION_TYPE_ALIASES = {
+            'symmetric': 'symmetric', 'sym': 'symmetric', 's': 'symmetric',
+            'asymmetric': 'asymmetric', 'assym': 'asymmetric', 'a': 'asymmetric',
+            'off': 'off', 'none': 'off'
+        }  
+        
         # Temporarily hold overrides from kwargs
         self._overrides = kwargs.copy()        
         self.config_path = os.path.abspath(os.path.normpath(os.path.join("modules", "sd_simple_kes", "kes_config", "default_config.yaml")))
@@ -94,11 +101,8 @@ class SimpleKEScheduler:
                 raise KeyError(f"[KEScheduler] Missing required setting: {key}")
             setattr(self, key, value)
     
-        self.RANDOMIZATION_TYPE_ALIASES = {
-            'symmetric': 'symmetric', 'sym': 'symmetric', 's': 'symmetric',
-            'asymmetric': 'asymmetric', 'assym': 'asymmetric', 'a': 'asymmetric',
-            'off': 'off', 'none': 'off'
-        }        
+          
+                     
     
     def __call__(self):        
         sigmas = self.compute_sigmas()
