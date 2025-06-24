@@ -51,38 +51,38 @@ sharpness: 0.9070742264431869
 sharpness_randomization_type: asymmetric
 sharpness_randomization_percent: 0.2
 #
-early_stopping_rand: false
-early_stopping_rand_min: 0.001
-early_stopping_rand_max: 0.02
+early_stopping_threshold_rand: false
+early_stopping_threshold_rand_min: 0.001
+early_stopping_threshold_rand_max: 0.02
 early_stopping_threshold: 0.01
 early_stopping_threshold_randomization_type: asymmetric
 early_stopping_threshold_randomization_percent: 0.2
 
 #
-initial_step_rand: false
-initial_step_rand_min: 0.7
-initial_step_rand_max: 1.0
+initial_step_size_rand: false
+initial_step_size_rand_min: 0.7
+initial_step_size_rand_max: 1.0
 initial_step_size: 0.90
 initial_step_size_randomization_type: asymmetric
 initial_step_size_randomization_percent: 0.2
 #
-final_step_rand: false
-final_step_rand_min: 0.1
-final_step_rand_max: 0.3
+final_step_size_rand: false
+final_step_size_rand_min: 0.1
+final_step_size_rand_max: 0.3
 final_step_size: 0.20
 final_step_size_randomization_type: asymmetric
 final_step_size_randomization_percent: 0.2
 #
-initial_noise_rand: false
-initial_noise_rand_min: 1.0
-initial_noise_rand_max: 1.5
+initial_noise_scale_rand: false
+initial_noise_scale_rand_min: 1.0
+initial_noise_scale_rand_max: 1.5
 initial_noise_scale: 1.25
 initial_noise_scale_randomization_type: asymmetric
 initial_noise_scale_randomization_percent: 0.2
 #
-final_noise_rand: false
-final_noise_rand_min: 0.6
-final_noise_rand_max: 1.0
+final_noise_scale_rand: false
+final_noise_scale_rand_min: 0.6
+final_noise_scale_rand_max: 1.0
 final_noise_scale: 0.80
 final_noise_scale_randomization_type: asymmetric
 final_noise_scale_randomization_percent: 0.2
