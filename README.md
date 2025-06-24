@@ -134,11 +134,6 @@ Enable `global_randomize: true` in YAML or pass it in your config dict. You can 
 
 ---
 
-## 📷 Visual Test
-
-See `proof it works.png` for a sample confirmation that the scheduler executes and produces valid sigma sequences.
-
----
 
 ## 📜 License
 
