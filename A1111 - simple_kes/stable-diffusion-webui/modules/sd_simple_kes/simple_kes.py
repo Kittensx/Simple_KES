@@ -100,10 +100,8 @@ class SimpleKEScheduler:
             'off': 'off', 'none': 'off'
         }        
     
-    def __call__(self):
-        #print("[SimpleKEScheduler] __call__ triggered. Returning sigmas...")
+    def __call__(self):        
         sigmas = self.compute_sigmas()
-
         if torch.isnan(sigmas).any():
             raise ValueError("[SimpleKEScheduler] NaN detected in sigmas")
         if torch.isinf(sigmas).any():
