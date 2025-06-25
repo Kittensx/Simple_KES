@@ -1,0 +1,28 @@
+[Config Validation] Config validated and missing values filled successfully.
+[Randomization] sigma_min: No randomization applied. Using default value: 0.13757067353874633
+[Random Range] sigma_max: Picked random value 47.95768510805332 between 10 and 50
+[Randomization] sigma_max: Applied min/max randomization. Final value: 47.95768510805332
+[Randomization] start_blend: No randomization applied. Using default value: 0.10237033381422371
+[Randomization] end_blend: No randomization applied. Using default value: 0.5627048166151302
+[Randomization] sharpness: No randomization applied. Using default value: 0.9070742264431869
+[Randomization] early_stopping_threshold: No randomization applied. Using default value: 0.01
+[Randomization] initial_step_size: No randomization applied. Using default value: 0.9
+[Randomization] final_step_size: No randomization applied. Using default value: 0.2
+[Randomization] initial_noise_scale: No randomization applied. Using default value: 1.25
+[Randomization] final_noise_scale: No randomization applied. Using default value: 0.8
+[Randomization] smooth_blend_factor: No randomization applied. Using default value: 9.426004103284665
+[Randomization] step_size_factor: No randomization applied. Using default value: 0.80814932869181
+[Randomization] noise_scale_factor: No randomization applied. Using default value: 0.8113992828873163
+[Random Range] rho: Picked random value 6.18310261360206 between 5.0 and 10.0
+[Randomization] rho: Applied min/max randomization. Final value: 6.18310261360206
+[Auto Sigma Min] sigma_min set to 0.23978842554026658 using scale factor 200
+Using device: cuda
+Final sigmas: sigma_min=0.23978842794895172, sigma_max=47.95768737792969
+Generated sigma sequences. Karras: tensor([47.9577, 39.6517, 32.5869, 26.6092, 21.5793, 17.3720, 13.8752, 10.9887,
+         8.6235,  6.7008,  5.1512,  3.9139,  2.9361,  2.1719,  1.5820,  1.1327,
+         0.7957,  0.5471,  0.3672,  0.2398,  0.0000], device='cuda:0'), Exponential: tensor([47.9577, 36.2870, 27.4565, 20.7748, 15.7192, 11.8939,  8.9995,  6.8094,
+         5.1523,  3.8985,  2.9498,  2.2319,  1.6888,  1.2778,  0.9669,  0.7316,
+         0.5535,  0.4188,  0.3169,  0.2398,  0.0000], device='cuda:0')
+[Progress Initialized] Created progress tensor with 20 steps (excluding terminal step) on device: cuda
+[Initialization] Pre-allocated empty sigma sequence with shape: torch.Size([20]) on device: cuda
+[Sharpen Mask] Sharpening applied at steps: [15, 16, 17, 18, 19, 20]
