@@ -248,57 +248,38 @@ class SimpleKEScheduler:
         self.log(f"[Randomization Type] {key_prefix}: Randomized value {value}")
         return value
 
-
-   
     def get_random_or_default(self, key_prefix, default_value):
         """
-        Combines min/max randomization and randomization_type percent-based randomization.
-        Flow:
-            1. If _rand flag is ON → pick random value between rand_min and rand_max.
-            2. If randomization_type flag is ON → further randomize using randomization_percent.
-            3. Otherwise, use the default_value.
+        Selects randomization method based on active flags:
+            - If both enabled → prioritize randomization type (or min/max if you prefer).
+            - If only one enabled → apply that one.
+            - If neither → return default value.
         """
-        # Start with the default value
-        result_value = default_value
+        rand_type_enabled = self.settings.get(f'{key_prefix}_enable_randomization_type', False)
+        min_max_enabled = self.settings.get(f'{key_prefix}_rand', False)
 
-        # Check if min/max randomization is enabled
-        if self.settings.get(f'{key_prefix}_rand', False):
-            result_value = self.get_random_between_min_max(key_prefix, default_value)
-            self.log(f"[Randomization] {key_prefix}: Applied min/max randomization. New base value: {result_value}")
-        else:
-            self.log(f"[Randomization] {key_prefix}: Min/max randomization is OFF. Using default/base value: {result_value}")
+        if rand_type_enabled and min_max_enabled:
+            self.log(f"[Randomization Policy] Both min/max and randomization type enabled for {key_prefix}. System will prioritize randomization type.")
+            result_value = self.get_random_by_type(key_prefix, default_value)
 
-        # Check if randomization type is enabled
-        if self.settings.get(f'{key_prefix}_enable_randomization_type', False):
-            result_value = self.get_random_by_type(key_prefix, result_value)
+        elif rand_type_enabled:
+            result_value = self.get_random_by_type(key_prefix, default_value)
             self.log(f"[Randomization] {key_prefix}: Applied randomization type. Final value: {result_value}")
+
+        elif min_max_enabled:
+            result_value = self.get_random_between_min_max(key_prefix, default_value)
+            self.log(f"[Randomization] {key_prefix}: Applied min/max randomization. Final value: {result_value}")
+
         else:
-            self.log(f"[Randomization] {key_prefix}: Randomization type is OFF. Using current value: {result_value}")
+            result_value = default_value
+            self.log(f"[Randomization] {key_prefix}: No randomization applied. Using default value: {result_value}")
 
         return result_value
 
-
-
     def start_sigmas(self, steps, sigma_min, sigma_max, device):
         """Retrieve randomized sigma_min and sigma_max using the structured randomizer, respecting auto mode."""
-
-        #auto_enabled = self.settings.get("sigma_auto_enabled", False)
-        #auto_mode = self.settings.get("sigma_auto_mode", "sigma_min")
-        #scale_factor = self.settings.get("sigma_scale_factor", 1000)
-
-        # Apply randomization, respecting auto mode
-        self.sigma_min = self.get_random_or_default('sigma_min', sigma_min)
-        self.sigma_max = self.get_random_or_default('sigma_max', sigma_max)
-
-        # Apply auto scaling if enabled
-        if self.sigma_auto_enabled:
-            if self.sigma_auto_mode == "sigma_min":
-                self.sigma_min = self.sigma_max / self.sigma_scale_factor
-                self.log(f"[Auto Sigma Min] sigma_min set to {self.sigma_min} using scale factor {self.sigma_scale_factor}")
-
-            elif self.sigma_auto_mode == "sigma_max":
-                self.sigma_max = self.sigma_min * self.sigma_scale_factor
-                self.log(f"[Auto Sigma Max] sigma_max set to {self.sigma_max} using scale factor {self.sigma_scale_factor}")
+        #self.log(f"[DEBUG Start Sigmas] Using pre-randomized sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+        # Apply auto scaling if enabled       
 
         # Ensure sigma_min is less than sigma_max
         if self.sigma_min >= self.sigma_max:
@@ -397,7 +378,7 @@ class SimpleKEScheduler:
         self.start_sigmas(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device)
         self.sigmas_karras = get_sigmas_karras(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device)
         self.sigmas_exponential = get_sigmas_exponential(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device) 
-        self.log(f"Randomized Values: sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+        #self.log(f"[DEBUG] Randomized Values: sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
                   
         # Match lengths of sigma sequences
         target_length = min(len(self.sigmas_karras), len(self.sigmas_exponential))  
@@ -421,15 +402,17 @@ class SimpleKEScheduler:
         self.sigma_max = self.sigma_max * 1.1
       
         # Define progress and initialize blend factor
-        self.progress = torch.linspace(0, 1, len(self.sigmas_karras)).to(self.device)
-        self.log(f"Progress created {self.progress}")
-        self.log(f"Progress Using device: {self.device}")
+        self.progress = torch.linspace(0, 1, len(self.sigmas_karras)).to(self.device)        
+        meaningful_steps = len(self.progress) - 1  # Adjust for appended zero step        
+        self.log(f"[Progress Initialized] Created progress tensor with {meaningful_steps} steps (excluding terminal step) on device: {self.device}")
+
+
         
         sigs = torch.zeros_like(self.sigmas_karras).to(self.device)
-        self.log(f"Sigs created {sigs}")        
+        self.log(f"[Initialization] Pre-allocated empty sigma sequence with shape: torch.Size([{meaningful_steps}]) on device: {self.device}")
+       
 
-        # Iterate through each step, dynamically adjust blend factor, step size, and noise scaling
-        
+        # Iterate through each step, dynamically adjust blend factor, step size, and noise scaling        
         if len(self.sigmas_karras) < len(self.sigmas_exponential):
             # Pad `sigmas_karras` with the last value
             padding_karras = torch.full((len(self.sigmas_exponential) - len(self.sigmas_karras),), self.sigmas_karras[-1]).to(self.sigmas_karras.self.device)
@@ -438,7 +421,7 @@ class SimpleKEScheduler:
             # Pad `sigmas_exponential` with the last value
             padding_exponential = torch.full((len(self.sigmas_karras) - len(self.sigmas_exponential),), self.sigmas_exponential[-1]).to(self.sigmas_exponential.device)
             self.sigmas_exponential = torch.cat([self.sigmas_exponential, padding_exponential])
-       
+        #self.log(f"[Padding] Adjusted sigma sequences to matching length: {meaningful_steps + 1} steps.")
         for i in range(len(self.sigmas_karras)):    
                   
             # Adaptive step size and blend factor calculations
@@ -456,7 +439,9 @@ class SimpleKEScheduler:
 
         # Optional: Adaptive sharpening based on sigma values
         self.sharpen_mask = torch.where(sigs < self.sigma_min * 1.5, self.sharpness, 1.0).to(self.device)
-        self.log(f"sharpen_mask created {self.sharpen_mask} with device {self.device}"   )
+        sharpen_indices = torch.where(self.sharpen_mask < 1.0)[0].tolist()
+        self.log(f"[Sharpen Mask] Sharpening applied at steps: {sharpen_indices}")
+        #self.log(f"sharpen_mask created {self.sharpen_mask} with device {self.device}"   )
         sigs = sigs * self.sharpen_mask
         #self.log(f"Sigs after sharpen_mask: {sigs}")
         
