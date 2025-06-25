@@ -162,66 +162,133 @@ class SimpleKEScheduler:
             default_val = self.settings[key]
             randomized_val = self.get_random_or_default(key, default_val)
             self.settings[key] = randomized_val
-            setattr(self, key, randomized_val)  # 🔄 update self.X too
+            setattr(self, key, randomized_val)  
    
-    def get_random_or_default(self, key_prefix, default_value):
-        auto_enabled = self.sigma_auto_enabled
-        auto_mode = self.sigma_auto_mode
-
-        # Handle randomization type and percent (allow per-key override)
-        global_type_raw = self.settings.get('randomization_type', 'asymmetric').lower()
-        randomization_type = self.RANDOMIZATION_TYPE_ALIASES.get(global_type_raw, 'asymmetric')
-
-        key_type_raw = self.settings.get(f'{key_prefix}_randomization_type', None)
-        if key_type_raw:
-            key_type_resolved = self.RANDOMIZATION_TYPE_ALIASES.get(key_type_raw.lower())
-            if key_type_resolved:
-                randomization_type = key_type_resolved
-
-        # Handle randomization percent
-        randomization_percent = self.settings.get('randomization_percent', 0.2)
-        per_key_percent = self.settings.get(f'{key_prefix}_randomization_percent', None)
-        if per_key_percent is not None:
-            randomization_percent = per_key_percent
-
+   
+    def get_random_between_min_max(self, key_prefix, default_value):
+        """
+        Picks a random value between _rand_min and _rand_max if _rand is True.
+        Otherwise, returns the base value.
+        """
         randomize_flag = self.settings.get(f'{key_prefix}_rand', False)
 
         if randomize_flag:
+            rand_min = self.settings.get(f'{key_prefix}_rand_min', default_value)
+            rand_max = self.settings.get(f'{key_prefix}_rand_max', default_value)
+
+            if rand_min == rand_max:
+                self.log(f"[Random Range] {key_prefix}: min and max are equal ({rand_min}). Using single value.")
+                return rand_min
+
+            value = random.uniform(rand_min, rand_max)
+            self.log(f"[Random Range] {key_prefix}: Picked random value {value} between {rand_min} and {rand_max}")
+            return value
+        else:
+            self.log(f"[Random Range] {key_prefix}: Randomization is OFF. Using base value {default_value}")
+            return default_value
+
+    def get_random_by_type(self, key_prefix, default_value):
+        randomization_enabled = self.settings.get(f'{key_prefix}_enable_randomization_type', False)
+
+        if not randomization_enabled:
+            self.log(f"[Randomization Type] {key_prefix}: Randomization type is OFF. Using base value {default_value}")
+            return default_value
+
+        randomization_type = self.get_randomization_type(key_prefix)
+        randomization_percent = self.get_randomization_percent(key_prefix)
+
+        if randomization_type == 'symmetric':
+            rand_min = default_value * (1 - randomization_percent)
+            rand_max = default_value * (1 + randomization_percent)
+            self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
+
+        elif randomization_type == 'asymmetric':
+            rand_min = default_value * (1 - randomization_percent)
+            rand_max = default_value * (1 + (randomization_percent * 2))
+            self.log(f"[Asymmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
+
+        elif randomization_type == 'logarithmic':
+            rand_min = math.log(default_value * (1 - randomization_percent))
+            rand_max = math.log(default_value * (1 + randomization_percent))
+            value = math.exp(random.uniform(rand_min, rand_max))
+            self.log(f"[Logarithmic Randomization] {key_prefix}: Log-space randomization resulted in {value}")
+            return value
+
+        elif randomization_type == 'exponential':
+            rand_min = default_value * (1 - randomization_percent)
+            rand_max = default_value * (1 + randomization_percent)
+            base_value = random.uniform(rand_min, rand_max)
+            value = math.exp(base_value)
+            self.log(f"[Exponential Randomization] {key_prefix}: Randomized exponential value {value}")
+            return value
+
+        else:
+            self.log(f"[Randomization Type] {key_prefix}: Invalid randomization type {randomization_type}. Using base value.")
+            return default_value
+
+        value = random.uniform(rand_min, rand_max)
+        self.log(f"[Randomization Type] {key_prefix}: Randomized value {value}")
+        return value
+
+
+   
+    def get_random_or_default(self, key_prefix, default_value):
+        """
+        Combines min/max randomization and randomization_type percent-based randomization.
+        Flow:
+            1. If _rand flag is ON → pick random value between rand_min and rand_max.
+            2. If randomization_type flag is ON → further randomize using randomization_percent.
+            3. Otherwise, use the default_value.
+        """
+        # Step 1: _rand flag controls the base value
+        base_value = self.get_random_between_min_max(key_prefix, default_value)
+
+        # Step 2: randomization_type flag can further randomize the base_value
+        randomization_enabled = self.settings.get(f'{key_prefix}_enable_randomization_type', False)
+
+        if randomization_enabled:
+            randomization_type = self.get_randomization_type(key_prefix)
+            randomization_percent = self.get_randomization_percent(key_prefix)
+
             if randomization_type == 'symmetric':
-                rand_min = default_value * (1 - randomization_percent)
-                rand_max = default_value * (1 + randomization_percent)
+                rand_min = base_value * (1 - randomization_percent)
+                rand_max = base_value * (1 + randomization_percent)
                 self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
 
             elif randomization_type == 'asymmetric':
-                rand_min = default_value * (1 - randomization_percent)
-                rand_max = default_value * (1 + (randomization_percent * 2))
+                rand_min = base_value * (1 - randomization_percent)
+                rand_max = base_value * (1 + (randomization_percent * 2))
                 self.log(f"[Asymmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
 
-            elif randomization_type == 'off':
-                rand_min = self.settings.get(f'{key_prefix}_rand_min', default_value)
-                rand_max = self.settings.get(f'{key_prefix}_rand_max', default_value)
-                self.log(f"[Randomization Off] {key_prefix}: Manual range {rand_min} to {rand_max}")           
+            elif randomization_type == 'logarithmic':
+                rand_min = math.log(base_value * (1 - randomization_percent))
+                rand_max = math.log(base_value * (1 + randomization_percent))
+                final_value = math.exp(random.uniform(rand_min, rand_max))
+                self.log(f"[Logarithmic Randomization] {key_prefix}: Log-space randomization resulted in {final_value}")
+                return final_value
+
+            elif randomization_type == 'exponential':
+                rand_min = base_value * (1 - randomization_percent)
+                rand_max = base_value * (1 + randomization_percent)
+                base_random = random.uniform(rand_min, rand_max)
+                final_value = math.exp(base_random)
+                self.log(f"[Exponential Randomization] {key_prefix}: Randomized exponential value {final_value}")
+                return final_value
 
             else:
-                raise ValueError(f"[Config Error] Invalid randomization_type: {randomization_type}.")
+                self.log(f"[Randomization Type] {key_prefix}: Invalid randomization type {randomization_type}. Using base value.")
+                return base_value
 
-            value = random.uniform(rand_min, rand_max)
-            self.log(f"Randomized {key_prefix}: {value}")
+            # For symmetric and asymmetric, finalize the randomization
+            final_value = random.uniform(rand_min, rand_max)
+            self.log(f"[Randomization Type] {key_prefix}: Final randomized value {final_value}")
+            return final_value
 
         else:
-            value = default_value
-            self.log(f"Using default {key_prefix}: {value}")
+            # No further randomization → use base_value directly
+            self.log(f"[Randomization] {key_prefix}: Randomization type is OFF. Using base value {base_value}")
+            return base_value
 
-        # Apply auto mode override if needed        
-        if auto_enabled:
-            if auto_mode == 'sigma_min' and key_prefix == 'sigma_min':
-                value = self.sigma_max / self.sigma_scale_factor
-                self.log(f"[Auto Mode Override] sigma_min is auto-controlled. Calculated as sigma_max / scale_factor: {value}")
-
-            if auto_mode == 'sigma_max' and key_prefix == 'sigma_max':
-                value = self.sigma_min * self.sigma_scale_factor
-                self.log(f"[Auto Mode Override] sigma_max is auto-controlled. Calculated as sigma_min * scale_factor: {value}")
-        return value
 
     def start_sigmas(self, steps, sigma_min, sigma_max, device):
         """Retrieve randomized sigma_min and sigma_max using the structured randomizer, respecting auto mode."""
