@@ -2,7 +2,7 @@ device: "cuda"
 debug: true
 global_randomize: false
 #
-#randomization_type: asymmetric # Options: asymmetric, symmetric, exponential, logorithmic #off is no longer a valid choice. Use the boolean flag for each variable to turn it on/off
+#randomization_type: asymmetric # Options: asymmetric, symmetric, exponential, or log #off is no longer a valid choice. Use the boolean flag for each variable to turn it on/off
 #randomization_percent: 0.2 #Set to a decimal value
 #
 sigma_scale_factor: 200
