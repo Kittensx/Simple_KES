@@ -52,11 +52,34 @@ A flexible sigma scheduler for Stable Diffusion pipelines supporting:
 
 * **`global_randomize`**
 
-  * If enabled, activates randomization for all supported parameters.
+  * If enabled, activates randomization for all supported parameters (_rand_min and _rand_max values only)
 * **`randomization_type`**
 
-  * Defines whether randomization is `symmetric` (equal range above and below default), `asymmetric` (larger range above), or `off` (manual min/max).
-* **`randomization_percent`**
+  *_randomization_type
+
+### Specifies the type of advanced randomization.
+
+##### Supported types:
+
+symmetric → Random range is evenly distributed above and below the base value.
+
+asymmetric → Random range is weighted with a larger upper range.
+
+logarithmic → Random values are selected in log-space, useful for scaling-sensitive parameters.
+
+exponential → Random values are generated using exponential growth based on a random base.
+
+##### Short Name Aliases:
+
+* s, sym → symmetric
+
+* a, asym → asymmetric
+
+* l, log → logarithmic
+
+* e, exp → exponential
+
+   **`randomization_percent`**
 
   * Defines the randomization range as a percentage of the base value.
 
