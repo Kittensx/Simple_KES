@@ -58,8 +58,10 @@ class SimpleKEScheduler:
         self.RANDOMIZATION_TYPE_ALIASES = {
             'symmetric': 'symmetric', 'sym': 'symmetric', 's': 'symmetric',
             'asymmetric': 'asymmetric', 'assym': 'asymmetric', 'a': 'asymmetric',
-            'off': 'off', 'none': 'off'
-        }  
+            'logarithmic': 'logarithmic', 'log': 'logarithmic', 'l': 'logarithmic',
+            'exponential': 'exponential', 'exp': 'exponential', 'e': 'exponential'
+        }
+
         
         # Temporarily hold overrides from kwargs
         self._overrides = kwargs.copy()        
@@ -164,6 +166,20 @@ class SimpleKEScheduler:
             self.settings[key] = randomized_val
             setattr(self, key, randomized_val)  
    
+    def get_randomization_type(self, key_prefix):
+        """
+        Retrieves the randomization type for a given key, with fallback to 'asymmetric' if missing.
+        """
+        randomization_type_raw = self.settings.get(f'{key_prefix}_randomization_type', 'asymmetric')
+        randomization_type = self.RANDOMIZATION_TYPE_ALIASES.get(randomization_type_raw.lower(), 'asymmetric')
+        return randomization_type
+
+    def get_randomization_percent(self, key_prefix):
+        """
+        Retrieves the randomization percent for a given key, with fallback to 0.2 if missing.
+        """
+        return self.settings.get(f'{key_prefix}_randomization_percent', 0.2)
+
    
     def get_random_between_min_max(self, key_prefix, default_value):
         """
@@ -201,6 +217,7 @@ class SimpleKEScheduler:
             rand_min = default_value * (1 - randomization_percent)
             rand_max = default_value * (1 + randomization_percent)
             self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
+            
 
         elif randomization_type == 'asymmetric':
             rand_min = default_value * (1 - randomization_percent)
@@ -227,6 +244,7 @@ class SimpleKEScheduler:
             return default_value
 
         value = random.uniform(rand_min, rand_max)
+        
         self.log(f"[Randomization Type] {key_prefix}: Randomized value {value}")
         return value
 
@@ -240,54 +258,25 @@ class SimpleKEScheduler:
             2. If randomization_type flag is ON → further randomize using randomization_percent.
             3. Otherwise, use the default_value.
         """
-        # Step 1: _rand flag controls the base value
-        base_value = self.get_random_between_min_max(key_prefix, default_value)
+        # Start with the default value
+        result_value = default_value
 
-        # Step 2: randomization_type flag can further randomize the base_value
-        randomization_enabled = self.settings.get(f'{key_prefix}_enable_randomization_type', False)
-
-        if randomization_enabled:
-            randomization_type = self.get_randomization_type(key_prefix)
-            randomization_percent = self.get_randomization_percent(key_prefix)
-
-            if randomization_type == 'symmetric':
-                rand_min = base_value * (1 - randomization_percent)
-                rand_max = base_value * (1 + randomization_percent)
-                self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
-
-            elif randomization_type == 'asymmetric':
-                rand_min = base_value * (1 - randomization_percent)
-                rand_max = base_value * (1 + (randomization_percent * 2))
-                self.log(f"[Asymmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
-
-            elif randomization_type == 'logarithmic':
-                rand_min = math.log(base_value * (1 - randomization_percent))
-                rand_max = math.log(base_value * (1 + randomization_percent))
-                final_value = math.exp(random.uniform(rand_min, rand_max))
-                self.log(f"[Logarithmic Randomization] {key_prefix}: Log-space randomization resulted in {final_value}")
-                return final_value
-
-            elif randomization_type == 'exponential':
-                rand_min = base_value * (1 - randomization_percent)
-                rand_max = base_value * (1 + randomization_percent)
-                base_random = random.uniform(rand_min, rand_max)
-                final_value = math.exp(base_random)
-                self.log(f"[Exponential Randomization] {key_prefix}: Randomized exponential value {final_value}")
-                return final_value
-
-            else:
-                self.log(f"[Randomization Type] {key_prefix}: Invalid randomization type {randomization_type}. Using base value.")
-                return base_value
-
-            # For symmetric and asymmetric, finalize the randomization
-            final_value = random.uniform(rand_min, rand_max)
-            self.log(f"[Randomization Type] {key_prefix}: Final randomized value {final_value}")
-            return final_value
-
+        # Check if min/max randomization is enabled
+        if self.settings.get(f'{key_prefix}_rand', False):
+            result_value = self.get_random_between_min_max(key_prefix, default_value)
+            self.log(f"[Randomization] {key_prefix}: Applied min/max randomization. New base value: {result_value}")
         else:
-            # No further randomization → use base_value directly
-            self.log(f"[Randomization] {key_prefix}: Randomization type is OFF. Using base value {base_value}")
-            return base_value
+            self.log(f"[Randomization] {key_prefix}: Min/max randomization is OFF. Using default/base value: {result_value}")
+
+        # Check if randomization type is enabled
+        if self.settings.get(f'{key_prefix}_enable_randomization_type', False):
+            result_value = self.get_random_by_type(key_prefix, result_value)
+            self.log(f"[Randomization] {key_prefix}: Applied randomization type. Final value: {result_value}")
+        else:
+            self.log(f"[Randomization] {key_prefix}: Randomization type is OFF. Using current value: {result_value}")
+
+        return result_value
+
 
 
     def start_sigmas(self, steps, sigma_min, sigma_max, device):
