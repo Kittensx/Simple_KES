@@ -7,6 +7,12 @@ This update introduces a **more robust and explicit control** for parameter rand
 Previously, randomization could unintentionally apply if `_rand` flags were enabled and randomization types existed in the configuration. This could cause unintended blending of randomization methods without an explicit on/off control.
 
 ---
+## Installation
+* Download and replace the simple_kes.py file
+* Download and update/replace the default_config file adding the new configuration options.
+
+
+---
 
 ## Key Changes
 
@@ -55,7 +61,7 @@ In this example:
 
 ## Compatibility
 
-These changes are **backward compatible** if you add the new `_enable_randomization_type` keys to your existing configs. If missing, the system safely defaults to treating advanced randomization as disabled.
+These changes are **backward compatible** if you add the new `_enable_randomization_type` keys to your existing configs. If missing, the system safely defaults to treating advanced randomization as disabled. Just ensure you download the new main simple_kes.py file and replace your current version with it.
 
 ---
 
