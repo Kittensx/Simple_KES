@@ -13,9 +13,13 @@ from typing import Optional
 import json
 import numpy as np
 
+
+
 def simple_kes_scheduler(n: int, sigma_min: float, sigma_max: float, device: torch.device) -> torch.Tensor:
     scheduler = SimpleKEScheduler(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
     return scheduler()
+
+
     
 class SharedLogger:
     def __init__(self, debug=False):
@@ -61,6 +65,7 @@ class SimpleKEScheduler:
             'logarithmic': 'logarithmic', 'log': 'logarithmic', 'l': 'logarithmic',
             'exponential': 'exponential', 'exp': 'exponential', 'e': 'exponential'
         }
+
         
         # Temporarily hold overrides from kwargs
         self._overrides = kwargs.copy()        
@@ -82,7 +87,8 @@ class SimpleKEScheduler:
         validate_config(self.config, logger=self.logger)
    
         for key, value in self.settings.items():            
-            setattr(self, key, value)            
+            setattr(self, key, value)
+            
         if self.settings.get("global_randomize", False):
             self.apply_global_randomization()
         self.settings = self.settings.copy()        
@@ -103,17 +109,21 @@ class SimpleKEScheduler:
         
         self.initialize_generation_filename()
     
+
+        
     def __call__(self):
         # First pass: Run prepass to determine predicted_stop_step
         if not self.settings.get('skip_prepass', False):
-            final_steps =self.prepass_compute_sigmas()       
+            final_steps = self.prepass_compute_sigmas()  
+            sigmas = self.compute_sigmas(final_steps)
+            
             
             
         else:
            # Build sigma sequence directly (without prepass)
-            self.config_values()
-            self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
-            self.generate_sigmas_schedule()            
+            #self.config_values()
+            #self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
+            #self.generate_sigmas_schedule()            
             
             self.blend_sigma_sequence(
                 sigs=self.sigs,
@@ -124,7 +134,7 @@ class SimpleKEScheduler:
             )
             final_steps = n if n is not none else self.steps
         
-        sigmas = self.compute_sigmas(final_steps)
+            sigmas = self.compute_sigmas(final_steps)
        
         
         # Safety checks
@@ -139,7 +149,8 @@ class SimpleKEScheduler:
 
         # Save logs to file
         self.save_generation_settings()
-
+        
+        
         # Return final sigmas to the scheduler caller
         return sigmas
 
@@ -168,7 +179,7 @@ class SimpleKEScheduler:
         - ext (str): The file extension to use (default is 'txt').
         """        
 
-        with open(self.log_filename, "w") as f:
+        with open(self.log_filename, "w", encoding = 'utf-8') as f:
             for line in self.logger.log_buffer:
                 f.write(f"{line}\n")
 
@@ -177,7 +188,7 @@ class SimpleKEScheduler:
     
     def load_config(self):
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, 'r', encoding = 'utf-8') as f:
                 user_config = yaml.safe_load(f)
                 return user_config
         except FileNotFoundError:
@@ -195,7 +206,8 @@ class SimpleKEScheduler:
             if key.endswith("_rand_min") or key.endswith("_rand_max"):
                 base_key = key.rsplit("_rand_", 1)[0]
                 rand_flag_key = f"{base_key}_rand"
-                self.settings[rand_flag_key] = True        
+                self.settings[rand_flag_key] = True
+        
 
         # Step 2: If global_randomize is active, re-randomize all eligible keys
         if self.settings.get("global_randomize", False):           
@@ -220,6 +232,7 @@ class SimpleKEScheduler:
         Retrieves the randomization percent for a given key, with fallback to 0.2 if missing.
         """
         return self.settings.get(f'{key_prefix}_randomization_percent', 0.2)
+
    
     def get_random_between_min_max(self, key_prefix, default_value):
         """
@@ -326,9 +339,230 @@ class SimpleKEScheduler:
             self.log(f"[Correction] sigma_min ({old_sigma_min}) was >= sigma_max ({sigma_max}). Adjusted sigma_min to {sigma_min} using correction factor {correction_factor}.")
 
         self.log(f"Final sigmas: sigma_min={sigma_min}, sigma_max={sigma_max}")
-        return sigma_min, sigma_max    
+        return sigma_min, sigma_max
     
-    def compute_sigma_sequence(self, sigs, sigmas_karras, sigmas_exponential, pre_pass = False):
+
+
+    def blend_sigma_sequence(self, sigs, sigmas_karras, sigmas_exponential, pre_pass=False):
+        self.progress = torch.linspace(0, 1, len(sigmas_karras)).to(self.device)
+        self.blended_sigmas = []
+        self.change_log = []
+        
+        # === Final Pass ===
+        self.log("\n--- Starting Final Pass Blending ---\n")
+        for i in range(len(sigmas_karras)):
+            if self.step_progress_mode == "linear":
+                progress_value = self.progress[i]
+            elif self.step_progress_mode == "exponential":
+                progress_value = self.progress[i] ** self.settings.get("exp_power", 2)
+            elif self.step_progress_mode == "logarithmic":
+                progress_value = torch.log1p(self.progress[i] * (torch.exp(torch.tensor(1.0)) - 1))
+            elif self.step_progress_mode == "sigmoid":
+                progress_value = 1 / (1 + torch.exp(-12 * (self.progress[i] - 0.5)))
+            else:
+                progress_value = self.progress[i]  # Fallback to linear (previous version used)            
+            self.step_size = self.initial_step_size * (1 - progress_value) + self.final_step_size * progress_value * self.step_size_factor
+            if i == 0:
+                step_label = "First Step"
+            elif i == len(sigmas_karras) // 2:
+                step_label = "Middle Step"
+            elif i == len(sigmas_karras) - 1:
+                step_label = "Last Step"
+            else:
+                step_label = None
+            
+            dynamic_blend_factor = self.start_blend * (1 - self.progress[i]) + self.end_blend * self.progress[i]
+            smooth_blend = torch.sigmoid((dynamic_blend_factor - 0.5) * self.smooth_blend_factor)            
+            noise_scale = self.initial_noise_scale * (1 - self.progress[i]) + self.final_noise_scale * self.progress[i] * self.noise_scale_factor                        
+            blended_sigma = sigmas_karras[i] * (1 - smooth_blend) + sigmas_exponential[i] * smooth_blend
+            
+
+            sigs[i] = blended_sigma * self.step_size * noise_scale
+            self.blended_sigmas.append(blended_sigma.item())
+            
+            if step_label:
+                if not pre_pass:  # Only log detailed steps in the final pass
+                    self.log("\n" + "=" * 10 + "\n[Start of Sigma Sequence Logging]\n" + "=" * 10)
+                    self.log(f"[{step_label} - Step {i+1}/{len(sigmas_karras)}]"
+                             f"\nStep Size: {self.step_size:.6f}"
+                             f"\nDynamic Blend Factor: {dynamic_blend_factor:.6f}"
+                             f"\nNoise Scale: {noise_scale:.6f}"
+                             f"\nSmooth Blend: {smooth_blend:.6f}"
+                             f"\nBlended Sigma: {blended_sigma:.6f}"
+                             f"\nFinal Sigma: {sigs[i]:.6f}")
+                    self.log("\n" + "=" * 10 + "\n[End of Sigma Sequence Logging]\n" + "=" * 10)
+
+                elif pre_pass:  # Optional: Log a simple summary in the prepass
+                    self.log(f"[Prepass {step_label} - Step {i+1}/{len(sigmas_karras)}] "
+                             f"Blended Sigma: {blended_sigma:.6f}, Final Sigma: {sigs[i]:.6f}")
+            
+            if i == 0:
+                step_label = "First Step"
+            elif i == len(sigmas_karras) - 1:
+                step_label = "Last Step"
+            else:
+                step_label = None
+
+            if step_label:
+                self.log("\n" + "=" * 10 + "\n[Start of Sigma Sequence Logging]\n" + "=" * 10)
+                self.log(f"[{step_label} - Step {i+1}/{len(sigmas_karras)}]"
+                         f"\nStep Size: {self.step_size:.6f}"
+                         f"\nBlended Sigma: {blended_sigma:.6f}"
+                         f"\nFinal Sigma: {sigs[i]:.6f}")
+                self.log("\n" + "=" * 10 + "\n[End of Sigma Sequence Logging]\n" + "=" * 10)
+
+            if i > 0:
+                self.change = torch.abs(sigs[i] - sigs[i - 1])
+                self.change_log.append(self.change.item())
+
+            # Early Stopping Evaluation
+            if i > self.safety_minimum_stop_step and len(self.change_log) > 5:
+                #relative_sigma_progress = (blended_sigma - self.sigs[-1].item()) / blended_sigma                
+                final_target_sigma = sigmas_karras[-1].item()  # or use min(self.sigmas) if preferred
+                #relative_sigma_progress = (blended_sigma - final_target_sigma) / blended_sigma  
+                if blended_sigma != 0:
+                    relative_sigma_progress = (blended_sigma - final_target_sigma) / blended_sigma
+                else:
+                    relative_sigma_progress = 0  # Assume fully converged if blended_sigma is 0                
+                
+
+                # Optional: Show variance but no need to stop on it
+                self.sigma_variance = torch.var(sigs).item() if self.device != 'cpu' else np.var(self.blended_sigmas)
+                self.log(f"Sigma Variance: {self.sigma_variance:.6f}")
+                
+                
+                
+        
+        if pre_pass:
+            self.log("\n--- Starting Pre-Pass Blending ---\n")
+            for i in range(len(sigmas_karras)):                   
+                dynamic_blend_factor = self.start_blend * (1 - self.progress[i]) + self.end_blend * self.progress[i]
+                smooth_blend = torch.sigmoid((dynamic_blend_factor - 0.5) * self.smooth_blend_factor)
+                noise_scale = self.initial_noise_scale * (1 - self.progress[i]) + self.final_noise_scale * self.progress[i] * self.noise_scale_factor                
+                self.blended_sigma = sigmas_karras[i] * (1 - smooth_blend) + sigmas_exponential[i] * smooth_blend
+                sigs[i] = self.blended_sigma * self.step_size * noise_scale
+                self.blended_sigmas.append(self.blended_sigma.item())
+
+                if i >= 2:
+                    sigma_rate = abs(self.blended_sigmas[i] - self.blended_sigmas[i - 1])
+                    previous_sigma_rate = abs(self.blended_sigmas[i - 1] - self.blended_sigmas[i - 2])
+                    if sigma_rate > previous_sigma_rate:
+                        self.log(f"Sigma decline is slowing down → possible plateau at step {i+1}.")
+
+                if i == 0:
+                    step_label = "Prepass First Step"
+                elif i == len(sigmas_karras) - 1:
+                    step_label = "Prepass Last Step"
+                else:
+                    step_label = None
+
+                if step_label:
+                    self.log(f"[{step_label} - Step {i+1}/{len(sigmas_karras)}] Blended Sigma: {self.blended_sigma:.6f}, Final Sigma: {sigs[i]:.6f}")
+                if i >= 2:
+                        sigma_rate = abs(self.blended_sigmas[i] - self.blended_sigmas[i - 1])
+                        previous_sigma_rate = abs(self.blended_sigmas[i - 1] - self.blended_sigmas[i - 2])
+
+                        if sigma_rate > previous_sigma_rate:
+                            self.log(f"Sigma decline is slowing down → possible plateau.")
+                if i > 0:
+                    self.change = torch.abs(sigs[i] - sigs[i - 1])
+                    self.change_log.append(self.change.item())
+                    relative_sigma_progress = (self.blended_sigma - sigs[-1].item()) / self.blended_sigma                                
+                    recent_changes = torch.abs(torch.tensor(self.change_log[-5:]))
+                    max_change = torch.max(recent_changes).item()                        
+                    mean_change = torch.mean(recent_changes).item()
+                    percent_of_threshold = (max_change / self.early_stopping_threshold) * 100                                        
+                    delta_change = abs(max_change - mean_change)
+
+                    
+                    # Check 1: Relative sigma progress
+                    relative_converged = relative_sigma_progress < 0.05
+                    # Check 2: Max recent sigma change
+                    max_converged = max_change < self.early_stopping_threshold
+                    # Check 3: Max-mean difference converged
+                    delta_converged = delta_change < self.settings.get('recent_change_convergence_delta', 0.02)
+
+                    
+                # Start checking for early stopping after minimum steps
+                if i > self.safety_minimum_stop_step and len(self.change_log) > 10:                  
+                    # Calculate variance and dynamic threshold
+                    self.blended_tensor = torch.tensor(self.blended_sigmas) 
+                    if self.device == 'cpu':
+                        self.sigma_variance = np.var(self.blended_sigmas)
+                    else: 
+                        self.sigma_variance = torch.var(sigs).item()
+
+
+                    self.min_sigma_threshold = self.sigma_variance * self.settings.get('sigma_variance_scale', 0.05)  # scale factor can be tuned
+
+                    self.log(f"\n--- Early Stopping Evaluation at Step {i+1} ---")
+                    self.log(f"Current Blended Sigma: {self.blended_sigma:.6f}")
+                    self.log(f"Sigma Variance: {self.sigma_variance:.6f}")
+                    self.log(f"Min Sigma Threshold: {self.min_sigma_threshold:.6f} (Scale: {self.settings.get('sigma_variance_scale', 0.05)})")
+                    self.log(f"Visual Sigma: {self.visual_sigma:.6f} (Config: min_visual_sigma={self.settings.get('min_visual_sigma', 10)})")
+                    self.log(f"Early Stopping Threshold: {self.early_stopping_threshold:.6f} (Config Method: {self.early_stopping_method})")
+                    self.log(f"Safety Minimum Stop Step: {self.safety_minimum_stop_step}")
+                    self.log(f"Config: early_stopping_threshold_rand: {self.settings.get('early_stopping_threshold_rand', False)}, early_stopping_threshold_rand_min: {self.settings.get('early_stopping_threshold_rand_min', 0.001)}, early_stopping_threshold_rand_max: {self.settings.get('early_stopping_threshold_rand_max', 0.02)}")
+
+                    # Reason for continuing (sigma still too high)
+                    if self.blended_sigma > self.min_sigma_threshold:
+                        self.log(f"Blended Sigma {self.blended_sigma:.6f} exceeds min sigma threshold {self.min_sigma_threshold:.6f} → Continuing.\n")
+                        
+                    
+                    # Start Early Stopping Checks
+                    
+                    if self.early_stopping_method == "mean":
+                        mean_change = sum(self.change_log) / len(self.change_log)
+                        if mean_change < self.early_stopping_threshold:
+                            skipped_steps = len(sigmas_karras) - (i + 1)
+                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {mean_change:.6f}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")  
+
+                    elif self.early_stopping_method == "max":
+                        #max_change = max(self.change_log)
+                        if max_change < self.early_stopping_threshold:
+                            skipped_steps = len(sigmas_karras) - (i + 1)
+                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {max_change:.6f}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")  
+                            
+                    elif self.early_stopping_method == "sum":
+                        stable_steps = sum(
+                            1 for j in range(1, len(self.change_log))
+                            if abs(self.change_log[j]) < self.early_stopping_threshold * abs(sigs[j])
+                        )
+
+                        if stable_steps >= 0.8 * len(self.change_log):
+                            skipped_steps = len(sigmas_karras) - (i + 1)
+                            self.log(f"Early stopping triggered by sum at step {i}. Stable steps: {stable_steps}/{len(self.change_log)}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")
+              
+                                   
+                   
+                    if relative_converged and max_converged and delta_converged:     
+                        self.log(f"\n--- Early Stopping Evaluation at Step {i+1} ---")
+                        self.log(f"Relative Sigma Progress: {relative_sigma_progress:.6f}")
+                        self.log(f"Max Recent Sigma Change: {max_change:.6f}")
+                        self.log(f"Mean Recent Sigma Change: {mean_change:.6f}")
+                        self.log(f"Delta Change: {delta_change:.6f} (Target: {self.settings.get('recent_change_convergence_delta', 0.02)})")                        
+                        self.log(f"Early stopping criteria met at step {i+1} based on all convergence checks.")
+                        self.predicted_stop_step = i
+
+                        if self.settings.get('graph_save_enable', False):                        
+                            graph_plot = plot_sigma_sequence(
+                                sigs[:i + 1],
+                                i,
+                                self.log_filename,
+                                self.graph_save_directory,
+                                self.settings.get('graph_save_enable', False)
+                            )
+                            self.log(f"Sigma sequence plot saved to {graph_plot}")
+                        break                       
+                                             
+
+            return sigs[:self.predicted_stop_step + 1]  # Return only the usable sequence
+
+
+        return sigs
+
+    '''
+    def blend_sigma_sequence(self, sigs, sigmas_karras, sigmas_exponential, pre_pass = False):
         """
         Computes the blended sigma sequence using adaptive step sizes, dynamic blend factors, 
         and noise scaling across the progress of the diffusion process.
@@ -361,61 +595,7 @@ class SimpleKEScheduler:
         - The method uses class attributes for step size factors, blend factors, and noise scaling.
         - This method modifies `sigs` in place.
         """        
-        self.progress = torch.linspace(0, 1, len(sigmas_karras)).to(self.device)
-        meaningful_steps = len(self.progress) - 1  # Adjust for appended zero step        
-        
-               # Adjust progress based on selected mode
-        self.blended_sigmas = []
-        
-        for i in range(len(sigmas_karras)):
-            if self.step_progress_mode == "linear":
-                    progress_value = self.progress[i]
-            elif self.step_progress_mode == "exponential":
-                progress_value = self.progress[i] ** self.settings.get("exp_power", 2)
-            elif self.step_progress_mode == "logarithmic":
-                progress_value = torch.log1p(self.progress[i] * (torch.exp(torch.tensor(1.0)) - 1))
-            elif self.step_progress_mode == "sigmoid":
-                progress_value = 1 / (1 + torch.exp(-12 * (self.progress[i] - 0.5)))
-            else:
-                progress_value = self.progress[i]  # Fallback to linear (previous version used)            
-            self.step_size = self.initial_step_size * (1 - progress_value) + self.final_step_size * progress_value * self.step_size_factor                        
-            dynamic_blend_factor = self.start_blend * (1 - self.progress[i]) + self.end_blend * self.progress[i]
-            noise_scale = self.initial_noise_scale * (1 - self.progress[i]) + self.final_noise_scale * self.progress[i] * self.noise_scale_factor
-            smooth_blend = torch.sigmoid((dynamic_blend_factor - 0.5) * self.smooth_blend_factor)
-
-            self.blended_sigma = sigmas_karras[i] * (1 - smooth_blend) + sigmas_exponential[i] * smooth_blend
-            sigs[i] = self.blended_sigma * self.step_size * noise_scale
-            # Log the first, middle, and last step
-            
-            if i == 0:
-                step_label = "First Step"
-            elif i == len(sigmas_karras) // 2:
-                step_label = "Middle Step"
-            elif i == len(sigmas_karras) - 1:
-                step_label = "Last Step"
-            else:
-                step_label = None
-
-            if step_label:
-                if not pre_pass:  # Only log detailed steps in the final pass
-                    self.log("\n" + "=" * 10 + "\n[Start of Sigma Sequence Logging]\n" + "=" * 10)
-                    self.log(f"[{step_label} - Step {i+1}/{len(sigmas_karras)}]"
-                             f"\nStep Size: {self.step_size:.6f}"
-                             f"\nDynamic Blend Factor: {dynamic_blend_factor:.6f}"
-                             f"\nNoise Scale: {noise_scale:.6f}"
-                             f"\nSmooth Blend: {smooth_blend:.6f}"
-                             f"\nBlended Sigma: {self.blended_sigma:.6f}"
-                             f"\nFinal Sigma: {sigs[i]:.6f}")
-                    self.log("\n" + "=" * 10 + "\n[End of Sigma Sequence Logging]\n" + "=" * 10)
-
-                elif pre_pass:  # Optional: Log a simple summary in the prepass
-                    self.log(f"[Prepass {step_label} - Step {i+1}/{len(sigmas_karras)}] "
-                             f"Blended Sigma: {self.blended_sigma:.6f}, Final Sigma: {sigs[i]:.6f}")
-       
-            self.blended_sigmas.append(self.blended_sigma.item())
-
-        return sigs
-        
+    '''
     def generate_sigmas_schedule(self):
         """
         Generates the sigma schedules required for the hybrid blending process.
@@ -437,7 +617,9 @@ class SimpleKEScheduler:
         These sigma sequences must be regenerated in both the prepass (for early stopping detection) 
         and the final pass (for polished sigma application), ensuring both passes are synchronized 
         with the current step count and randomization settings.
-        """        
+        """
+
+        
         self.sigmas_karras = get_sigmas_karras(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device)[:self.steps]
         self.sigmas_exponential = get_sigmas_exponential(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device)
         target_length = min(len(self.sigmas_karras), len(self.sigmas_exponential))  
@@ -478,10 +660,12 @@ class SimpleKEScheduler:
             # If sigmas are all invalid, set a safe fallback
             self.sigma_min, self.sigma_max = self.min_threshold, self.min_threshold              
             self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
-        self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device)  
+         
     
-    def config_values(self):                    
-        self.sharpen_mode = self.settings.get('sharpen_mode', 'full')        
+    def config_values(self):        
+            
+        self.sharpen_mode = self.settings.get('sharpen_mode', 'full')
+        
         if self.sigma_auto_enabled:
             if self.sigma_auto_mode not in ["sigma_min", "sigma_max"]:
                 raise ValueError(f"[Config Error] Invalid sigma_auto_mode: {self.sigma_auto_mode}. Must be 'sigma_min' or 'sigma_max'.")
@@ -512,6 +696,8 @@ class SimpleKEScheduler:
             self.early_stopping_method = 'mean'
        
         
+            
+    
     def prepass_compute_sigmas(self)->torch.Tensor:           
        
         if self.steps is None:
@@ -522,12 +708,16 @@ class SimpleKEScheduler:
         self.config_values()
         self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
         self.generate_sigmas_schedule()
+        self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device) 
+        
         
         self.predicted_stop_step = self.steps - 1  # Default to full length if not stopped
 
         # Reset tracking variables
         self.change_log = []
        
+       
+
         self.sigma_variance_threshold = self.settings.get('sharpen_variance_threshold', 0.01)
          
         self.N = self.settings.get('sharpen_last_n_steps', 10)
@@ -535,103 +725,29 @@ class SimpleKEScheduler:
             self.N = len(self.sigs)
             self.log(f"[Sharpening Notice] Requested last {self.N} steps exceeds sequence length. Using entire sequence instead.")
         
+       
         self.min_visual_sigma = self.settings.get('min_visual_sigma', 10)
         self.visual_sigma = max(0.8, self.sigma_min * self.min_visual_sigma)
         self.safety_minimum_stop_step = self.settings.get('safety_minimum_stop_step', 10)
-        self.compute_sigma_sequence(sigs = self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = True)
         
-        # Determine early stopping criteria
-        for i in range(len(self.sigmas_karras)):
-            
-            if i > 0:
-                self.change = torch.abs(self.sigs[i] - self.sigs[i - 1])
-                self.change_log.append(self.change.item())
-
                 
-            # Start checking for early stopping after minimum steps
-            if i > self.safety_minimum_stop_step:                   
-                # Calculate variance and dynamic threshold
-                self.blended_tensor = torch.tensor(self.blended_sigmas) 
-                if self.device == 'cpu':
-                    self.sigma_variance = np.var(self.blended_sigmas)
-                else: 
-                    self.sigma_variance = torch.var(self.sigs).item()
-
-                self.min_sigma_threshold = self.sigma_variance * self.settings.get('sigma_variance_scale', 0.05)  # scale factor can be tuned
-
-                # If sigma is still above the threshold, skip early stopping
-                if self.blended_sigma > self.min_sigma_threshold:
-                    continue  # Still too noisy to stop
-                    
-                if self.blended_sigma > self.visual_sigma:
-                    continue 
-
-                # Start Early Stopping Checks
-                if self.early_stopping_method == "mean":
-                    mean_change = sum(self.change_log) / len(self.change_log)
-                    if mean_change < self.early_stopping_threshold:
-                        skipped_steps = len(self.sigmas_karras) - (i + 1)
-                        self.log(f"Early stopping triggered by mean at step {i}. Mean change: {mean_change:.6f}. Steps used: {i + 1}/{len(self.sigmas_karras)}, steps skipped: {skipped_steps}")  
-                        if self.settings.get('graph_save_enable', False):
-                            graph_plot = plot_sigma_sequence(
-                                self.sigs[:i + 1],
-                                i,
-                                self.log_filename,
-                                self.graph_save_directory,
-                                self.settings.get('graph_save_enable', False)
-                            )
-                            self.log(f"Sigma sequence plot saved to {graph_plot}")  
-                    self.predicted_stop_step = i                    
-                    break
-                   
-                elif self.early_stopping_method == "max":
-                    max_change = max(self.change_log)
-                    if max_change < self.early_stopping_threshold:
-                        skipped_steps = len(self.sigmas_karras) - (i + 1)
-                        self.log(f"Early stopping triggered by mean at step {i}. Mean change: {max_change:.6f}. Steps used: {i + 1}/{len(self.sigmas_karras)}, steps skipped: {skipped_steps}")
-                        if self.settings.get('graph_save_enable', False):
-                            graph_plot = plot_sigma_sequence(
-                                self.sigs[:i + 1],
-                                i,
-                                self.log_filename,
-                                self.graph_save_directory,
-                                self.settings.get('graph_save_enable', False)
-                            )
-                            self.log(f"Sigma sequence plot saved to {graph_plot}")  
-                    self.predicted_stop_step = i                    
-                    break   
-                elif self.early_stopping_method == "sum":
-                    stable_steps = sum(
-                        1 for j in range(1, len(self.change_log))
-                        if abs(self.change_log[j]) < self.early_stopping_threshold * abs(self.sigs[j])
-                    )
-
-                    if stable_steps >= 0.8 * len(self.change_log):
-                        skipped_steps = len(self.sigmas_karras) - (i + 1)
-                        self.log(f"Early stopping triggered by sum at step {i}. Stable steps: {stable_steps}/{len(self.change_log)}. Steps used: {i + 1}/{len(self.sigmas_karras)}, steps skipped: {skipped_steps}")
-                        if self.settings.get('graph_save_enable', False):
-                            graph_plot = plot_sigma_sequence(
-                                self.sigs[:i + 1],
-                                i,
-                                self.log_filename,
-                                self.graph_save_directory,
-                                self.settings.get('graph_save_enable', False)
-                            )   
-                            self.log(f"Sigma sequence plot saved to {graph_plot}")    
-                    self.predicted_stop_step = i                     
-                    break   
-        if torch.all(self.change < self.early_stopping_threshold):
-            self.log("Early stopping criteria met.")
-            self.predicted_stop_step = len(self.change_log)  # This is the correct step index
-        else:
-            self.log(f"No full convergence, using predicted_stop_step: {self.predicted_stop_step}")
+        self.blend_sigma_sequence(sigs = self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = True)
+        self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device) 
+        
+        
+        
 
         if torch.isnan(self.sigs).any() or torch.isinf(self.sigs).any():
             raise ValueError("Invalid sigma values detected (NaN or Inf).")
-        final_steps = self.sigs[:self.predicted_stop_step + 1].to(self.device)        
-        return final_steps
+
+        final_steps = self.sigs[:self.predicted_stop_step + 1].to(self.device)
         
-    def compute_sigmas(self, n, final_steps)->torch.Tensor:  
+        return final_steps
+    
+     
+            
+        
+    def compute_sigmas(self, final_steps)->torch.Tensor:  
         acceptable_keys = [
                     "sigma_min", "sigma_max", "start_blend", "end_blend", "sharpness",
                     "early_stopping_threshold", "initial_step_size",
@@ -673,16 +789,15 @@ class SimpleKEScheduler:
         Returns:
             torch.Tensor: A tensor of blended sigma values.
         """                  
-        if self.skip_prepass:
-            self.steps = n if n is not None else 25
-        else:         
-            self.steps = len(final_steps)       
+         
+        self.steps = len(final_steps)       
         
         self.config_values()
         self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
         self.generate_sigmas_schedule()        
         
-        self.compute_sigma_sequence(sigs=self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = False)
+        self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device) 
+        self.blend_sigma_sequence(sigs=self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = False)
         '''
         if self.device == 'cpu':
             self.sigma_variance = np.var(self.blended_sigmas)
@@ -724,5 +839,8 @@ class SimpleKEScheduler:
             sharpen_indices = torch.where(self.sharpen_mask < 1.0)[0].tolist()
             self.sigs = self.sigs * self.sharpen_mask
             self.log(f"[Sharpen Mask] Full sharpening applied at steps: {sharpen_indices}")
+
+        
+        
 
         return self.sigs.to(self.device)
