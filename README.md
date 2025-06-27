@@ -14,6 +14,7 @@ This scheduler is highly configurable, supports structured randomization, and wa
 
 ---
 ## Versions 1.2 Changelog
+***Note: Version 1.2 is unstable and should only be used for testing purposes until I can stabilize it.***
  - Version 1.2 Adds a new **prepass system** that allows the scheduler to automatically adjust the number of steps based on how quickly the image starts to stabilize. This means it might take an image with requested steps of 50 and instead use 35 because it estimates faster convergence based off of generated sigma schedules. In the second pass, we pass the steps from prepass into the primary scheduler as the steps and generate a new sigma sequence off of the new step count. 
  - Purpose of version 1.2: revamp how early_stopping_threshold works. In previous version it existed but didn't work. This version was created specifically to make it work. 
  
