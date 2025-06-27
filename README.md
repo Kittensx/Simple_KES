@@ -16,7 +16,7 @@ This scheduler is highly configurable, supports structured randomization, and wa
 ## Versions 1.2 Changelog
 ***Note: Version 1.2 is unstable and should only be used for testing purposes until I can stabilize it.***
  - Version 1.2 Adds a new **prepass system** that allows the scheduler to automatically adjust the number of steps based on how quickly the image starts to stabilize. This means it might take an image with requested steps of 50 and instead use 35 because it estimates faster convergence based off of generated sigma schedules. In the second pass, we pass the steps from prepass into the primary scheduler as the steps and generate a new sigma sequence off of the new step count. 
- - Purpose of version 1.2: revamp how early_stopping_threshold works. In previous version it existed but didn't work. This version was created specifically to make it work. 
+ - Purpose of version 1.2: revamp how early_stopping_threshold works. In previous version it existed but didn't work. This version was created specifically to make it work.....it's close but before it was bugging by stopping too soon, now it's indicating that it could stop (via logs) but continues processing. 
  
 ### New Features
 - A new folder named ***simple_kes_v2*** has been dropped into both the A1111 and Forge folders for v1.2 The code inside is meant to replace the current version 1, and the folder names should be  renamed to drop the _v1.2 and placed into the proper "modules" folder in both programs
@@ -67,11 +67,11 @@ progress_value = 1 / (1 + torch.exp(-12 * (self.progress[i] - 0.5)))
 
 
 ### Known Issues / Bugs
-When using hires upscaling, the upscaler may not perform as well. Edges/details can appear washed out.
-If early stopping occurs, tweak the settings for early_stopping, including sigma_variance_scale, safety_minimum_stop_step (try increasing), min_visual_sigma
+- Hires not working if early_stopping triggers. Currently the early_stopping is bugged so this issue shouldn't be a problem (LOL). 
 - I have not tested the best values for initial_step_size, final_step_size, step_size_factor, initial_noise_scale, final_noise_scale, smooth_blend_factor, or noise_scale_factor, or the new early_stopping settings.
 
-
+### Final Thoughs on v1.2
+I think it's a better scheduler than before, despite its issues with not exiting soon enough.  I'm still working on it everyday, and hope to have a fix in by the end of the week.
 
 
 
