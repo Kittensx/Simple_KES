@@ -13,8 +13,6 @@ from typing import Optional
 import json
 import numpy as np
 
-
-
 def simple_kes_scheduler(n: int, sigma_min: float, sigma_max: float, device: torch.device) -> torch.Tensor:
     scheduler = SimpleKEScheduler(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
     return scheduler()
@@ -63,7 +61,6 @@ class SimpleKEScheduler:
             'logarithmic': 'logarithmic', 'log': 'logarithmic', 'l': 'logarithmic',
             'exponential': 'exponential', 'exp': 'exponential', 'e': 'exponential'
         }
-
         
         # Temporarily hold overrides from kwargs
         self._overrides = kwargs.copy()        
@@ -85,8 +82,7 @@ class SimpleKEScheduler:
         validate_config(self.config, logger=self.logger)
    
         for key, value in self.settings.items():            
-            setattr(self, key, value)
-            
+            setattr(self, key, value)            
         if self.settings.get("global_randomize", False):
             self.apply_global_randomization()
         self.settings = self.settings.copy()        
@@ -110,8 +106,7 @@ class SimpleKEScheduler:
     def __call__(self):
         # First pass: Run prepass to determine predicted_stop_step
         if not self.settings.get('skip_prepass', False):
-            final_steps =self.prepass_compute_sigmas()       
-            
+            final_steps =self.prepass_compute_sigmas() 
             
         else:
            # Build sigma sequence directly (without prepass)
@@ -127,7 +122,7 @@ class SimpleKEScheduler:
                 
             )
         
-        sigmas = self.compute_sigmas(final_steps)
+        sigmas = self.compute_sigmas(n, final_steps)
         # Safety checks
         if torch.isnan(sigmas).any():
             raise ValueError("[SimpleKEScheduler] NaN detected in sigmas")
@@ -196,8 +191,7 @@ class SimpleKEScheduler:
             if key.endswith("_rand_min") or key.endswith("_rand_max"):
                 base_key = key.rsplit("_rand_", 1)[0]
                 rand_flag_key = f"{base_key}_rand"
-                self.settings[rand_flag_key] = True
-        
+                self.settings[rand_flag_key] = True        
 
         # Step 2: If global_randomize is active, re-randomize all eligible keys
         if self.settings.get("global_randomize", False):           
@@ -222,7 +216,6 @@ class SimpleKEScheduler:
         Retrieves the randomization percent for a given key, with fallback to 0.2 if missing.
         """
         return self.settings.get(f'{key_prefix}_randomization_percent', 0.2)
-
    
     def get_random_between_min_max(self, key_prefix, default_value):
         """
@@ -329,8 +322,7 @@ class SimpleKEScheduler:
             self.log(f"[Correction] sigma_min ({old_sigma_min}) was >= sigma_max ({sigma_max}). Adjusted sigma_min to {sigma_min} using correction factor {correction_factor}.")
 
         self.log(f"Final sigmas: sigma_min={sigma_min}, sigma_max={sigma_max}")
-        return sigma_min, sigma_max
-    
+        return sigma_min, sigma_max    
     
     def compute_sigma_sequence(self, sigs, sigmas_karras, sigmas_exponential, pre_pass = False):
         """
@@ -382,9 +374,7 @@ class SimpleKEScheduler:
                 progress_value = 1 / (1 + torch.exp(-12 * (self.progress[i] - 0.5)))
             else:
                 progress_value = self.progress[i]  # Fallback to linear (previous version used)            
-            self.step_size = self.initial_step_size * (1 - progress_value) + self.final_step_size * progress_value * self.step_size_factor
-            
-            
+            self.step_size = self.initial_step_size * (1 - progress_value) + self.final_step_size * progress_value * self.step_size_factor                        
             dynamic_blend_factor = self.start_blend * (1 - self.progress[i]) + self.end_blend * self.progress[i]
             noise_scale = self.initial_noise_scale * (1 - self.progress[i]) + self.final_noise_scale * self.progress[i] * self.noise_scale_factor
             smooth_blend = torch.sigmoid((dynamic_blend_factor - 0.5) * self.smooth_blend_factor)
@@ -443,9 +433,7 @@ class SimpleKEScheduler:
         These sigma sequences must be regenerated in both the prepass (for early stopping detection) 
         and the final pass (for polished sigma application), ensuring both passes are synchronized 
         with the current step count and randomization settings.
-        """
-
-        
+        """        
         self.sigmas_karras = get_sigmas_karras(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device)[:self.steps]
         self.sigmas_exponential = get_sigmas_exponential(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device)
         target_length = min(len(self.sigmas_karras), len(self.sigmas_exponential))  
@@ -488,10 +476,8 @@ class SimpleKEScheduler:
             self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
         self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device)  
     
-    def config_values(self):        
-            
-        self.sharpen_mode = self.settings.get('sharpen_mode', 'full')
-        
+    def config_values(self):                    
+        self.sharpen_mode = self.settings.get('sharpen_mode', 'full')        
         if self.sigma_auto_enabled:
             if self.sigma_auto_mode not in ["sigma_min", "sigma_max"]:
                 raise ValueError(f"[Config Error] Invalid sigma_auto_mode: {self.sigma_auto_mode}. Must be 'sigma_min' or 'sigma_max'.")
@@ -522,8 +508,6 @@ class SimpleKEScheduler:
             self.early_stopping_method = 'mean'
        
         
-            
-    
     def prepass_compute_sigmas(self)->torch.Tensor:           
        
         if self.steps is None:
@@ -535,14 +519,11 @@ class SimpleKEScheduler:
         self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
         self.generate_sigmas_schedule()
         
-        
         self.predicted_stop_step = self.steps - 1  # Default to full length if not stopped
 
         # Reset tracking variables
         self.change_log = []
        
-       
-
         self.sigma_variance_threshold = self.settings.get('sharpen_variance_threshold', 0.01)
          
         self.N = self.settings.get('sharpen_last_n_steps', 10)
@@ -550,14 +531,10 @@ class SimpleKEScheduler:
             self.N = len(self.sigs)
             self.log(f"[Sharpening Notice] Requested last {self.N} steps exceeds sequence length. Using entire sequence instead.")
         
-       
         self.min_visual_sigma = self.settings.get('min_visual_sigma', 10)
         self.visual_sigma = max(0.8, self.sigma_min * self.min_visual_sigma)
         self.safety_minimum_stop_step = self.settings.get('safety_minimum_stop_step', 10)
-        
-                
         self.compute_sigma_sequence(sigs = self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = True)
-        
         
         # Determine early stopping criteria
         for i in range(len(self.sigmas_karras)):
@@ -575,7 +552,6 @@ class SimpleKEScheduler:
                     self.sigma_variance = np.var(self.blended_sigmas)
                 else: 
                     self.sigma_variance = torch.var(self.sigs).item()
-
 
                 self.min_sigma_threshold = self.sigma_variance * self.settings.get('sigma_variance_scale', 0.05)  # scale factor can be tuned
 
@@ -604,8 +580,6 @@ class SimpleKEScheduler:
                     self.predicted_stop_step = i                    
                     break
                    
-                    
-
                 elif self.early_stopping_method == "max":
                     max_change = max(self.change_log)
                     if max_change < self.early_stopping_threshold:
@@ -621,9 +595,7 @@ class SimpleKEScheduler:
                             )
                             self.log(f"Sigma sequence plot saved to {graph_plot}")  
                     self.predicted_stop_step = i                    
-                    break                    
-                        
-                        
+                    break   
                 elif self.early_stopping_method == "sum":
                     stable_steps = sum(
                         1 for j in range(1, len(self.change_log))
@@ -643,8 +615,7 @@ class SimpleKEScheduler:
                             )   
                             self.log(f"Sigma sequence plot saved to {graph_plot}")    
                     self.predicted_stop_step = i                     
-                    break                       
-        
+                    break   
         if torch.all(self.change < self.early_stopping_threshold):
             self.log("Early stopping criteria met.")
             self.predicted_stop_step = len(self.change_log)  # This is the correct step index
@@ -653,12 +624,10 @@ class SimpleKEScheduler:
 
         if torch.isnan(self.sigs).any() or torch.isinf(self.sigs).any():
             raise ValueError("Invalid sigma values detected (NaN or Inf).")
-
-        final_steps = self.sigs[:self.predicted_stop_step + 1].to(self.device)
-        
+        final_steps = self.sigs[:self.predicted_stop_step + 1].to(self.device)        
         return final_steps
-
-    def compute_sigmas(self, final_steps)->torch.Tensor:  
+        
+    def compute_sigmas(self, n, final_steps)->torch.Tensor:  
         acceptable_keys = [
                     "sigma_min", "sigma_max", "start_blend", "end_blend", "sharpness",
                     "early_stopping_threshold", "initial_step_size",
@@ -700,8 +669,10 @@ class SimpleKEScheduler:
         Returns:
             torch.Tensor: A tensor of blended sigma values.
         """                  
-         
-        self.steps = len(final_steps)       
+        if self.skip_prepass:
+            self.steps = n if n is not None else 25
+        else:         
+            self.steps = len(final_steps)       
         
         self.config_values()
         self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
@@ -749,8 +720,5 @@ class SimpleKEScheduler:
             sharpen_indices = torch.where(self.sharpen_mask < 1.0)[0].tolist()
             self.sigs = self.sigs * self.sharpen_mask
             self.log(f"[Sharpen Mask] Full sharpening applied at steps: {sharpen_indices}")
-
-        
-        
 
         return self.sigs.to(self.device)
