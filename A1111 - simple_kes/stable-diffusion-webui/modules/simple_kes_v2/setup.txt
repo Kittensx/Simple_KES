@@ -1,0 +1,1 @@
+remove the appended name "_v2" from all files/folders and place into the modules folder of A1111/Forge.
