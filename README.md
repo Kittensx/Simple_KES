@@ -3,6 +3,7 @@
 **Hybrid Sigma Scheduler for Stable Diffusion**  
 _A blend of Karras & Exponential scheduling with adaptive, randomized control._
 
+
 ---
 
 ## 📌 What is it?
@@ -12,6 +13,25 @@ _A blend of Karras & Exponential scheduling with adaptive, randomized control._
 This scheduler is highly configurable, supports structured randomization, and was built for developers and users who want fine-tuned control or experimental behavior beyond standard sampling techniques.
 
 ---
+## Versions 1.2 Changelog
+ - Version 1.2 Adds a new **prepass system** that allows the scheduler to automatically adjust the number of steps based on how quickly the image starts to stabilize.
+ - A New folder dropped into both the A1111 and Forge folders for v1.2 The code inside is meant to replace the current version 1, and the folder names should be  renamed to drop the _v1.2 and placed into the proper "modules" folder in both programs
+ - New Features:
+Early stopping methods added: mean, max, and sum
+Early stopping will now occur when sigmas start to converge
+An option to turn early stopping off has also been added to allow you to run it in version 1 mode. It isn't the exact same as version 1, but it skips prepass function which uses the early stopping methods to reduce step count.
+New config options meant to affect early stopping have been added
+More detailed logging support has been added if enabled.
+A graph can be generated if enabled to show where the steps converge.
+I have tested and updated the default_config values for: 
+
+ - Known Issues / Bugs
+When using hires upscaling, the upscaler may not perform as well. Edges/details can appear washed out.
+If early stopping occurs, tweak the settings for early_stopping, including sigma_variance_scale, safety_minimum_stop_step (try increasing), min_visual_sigma
+
+
+
+__
 ## Supported Stable Diffusion Projects (so far)
  - Automatic A1111 (for install click on 'A1111 - simple_kes' then follow the installation instructions)
  - Forge WebUi (for install click on Forge, then follow the installation instructions)
