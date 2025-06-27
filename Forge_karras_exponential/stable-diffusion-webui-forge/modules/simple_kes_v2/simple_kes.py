@@ -106,7 +106,8 @@ class SimpleKEScheduler:
     def __call__(self):
         # First pass: Run prepass to determine predicted_stop_step
         if not self.settings.get('skip_prepass', False):
-            final_steps =self.prepass_compute_sigmas() 
+            final_steps =self.prepass_compute_sigmas()       
+            
             
         else:
            # Build sigma sequence directly (without prepass)
@@ -114,15 +115,17 @@ class SimpleKEScheduler:
             self.start_sigmas(sigma_min=self.sigma_min, sigma_max=self.sigma_max)
             self.generate_sigmas_schedule()            
             
-            final_steps = self.compute_sigma_sequence(
+            self.blend_sigma_sequence(
                 sigs=self.sigs,
                 sigmas_karras=self.sigmas_karras,
                 sigmas_exponential=self.sigmas_exponential,
                 pre_pass = False
                 
             )
+            final_steps = n if n is not none else self.steps
         
-        sigmas = self.compute_sigmas(n, final_steps)
+        sigmas = self.compute_sigmas(final_steps)      
+        
         # Safety checks
         if torch.isnan(sigmas).any():
             raise ValueError("[SimpleKEScheduler] NaN detected in sigmas")
