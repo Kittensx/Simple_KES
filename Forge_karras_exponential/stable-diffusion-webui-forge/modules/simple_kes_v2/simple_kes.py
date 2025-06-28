@@ -620,7 +620,7 @@ class SimpleKEScheduler:
         """
 
         
-        self.sigmas_karras = get_sigmas_karras(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device)[:self.steps]
+        self.sigmas_karras = get_sigmas_karras(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device)
         self.sigmas_exponential = get_sigmas_exponential(n=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device)
         target_length = min(len(self.sigmas_karras), len(self.sigmas_exponential))  
         self.sigmas_karras = self.sigmas_karras[:target_length]
