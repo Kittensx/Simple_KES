@@ -53,8 +53,9 @@ class SimpleKEScheduler:
     """
     
     
-    def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cuda", logger=None, **kwargs)->torch.Tensor:         
-        self.steps = n if n is not None else 25         
+    def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cpu", logger=None, **kwargs)->torch.Tensor:         
+        self.steps = n if n is not None else 10 
+        self.original_steps = n
         self.device = torch.device(device if isinstance(device, str) else device)        
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
@@ -116,33 +117,22 @@ class SimpleKEScheduler:
         self.delta_converged = False
         self.early_stop_triggered = False
         
-
-        
     def __call__(self):
         # First pass: Run prepass to determine predicted_stop_step
         if not self.settings.get('skip_prepass', False):
-            final_steps = self.prepass_compute_sigmas()  
-            #sigmas = self.compute_sigmas(final_steps)
-            
-            
+            self.prepass_compute_sigmas()  
             
         else:
             # Build sigma sequence directly (without prepass)
             self.config_values()            
-            self.generate_sigmas_schedule()            
-            
+            self.generate_sigmas_schedule()  
             self.blend_sigma_sequence(
                 sigs=self.sigs,
                 sigmas_karras=self.sigmas_karras,
                 sigmas_exponential=self.sigmas_exponential,
-                pre_pass = False
-                
+                pre_pass = False                
             )
-            final_steps = n if n is not none else self.steps
-        
-        sigmas = self.compute_sigmas(final_steps)
-       
-        
+        sigmas = self.compute_sigmas()
         # Safety checks
         if torch.isnan(sigmas).any():
             raise ValueError("[SimpleKEScheduler] NaN detected in sigmas")
@@ -152,11 +142,9 @@ class SimpleKEScheduler:
             raise ValueError("[SimpleKEScheduler] All sigma values are <= 0")
         if (sigmas > 1000).all():
             raise ValueError("[SimpleKEScheduler] Sigma values are extremely large — might explode the model")
-
         # Save logs to file
-        self.save_generation_settings()
-        
-        
+        if self.debug:
+            self.save_generation_settings()
         # Return final sigmas to the scheduler caller
         return sigmas
 
@@ -172,8 +160,6 @@ class SimpleKEScheduler:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         self.log_filename = os.path.join(folder, f"{base_name}_{timestamp}.{ext}")
-        #return self.log_filename
-
       
     def save_generation_settings(self):
         """
@@ -183,14 +169,24 @@ class SimpleKEScheduler:
         - folder (str): Optional custom directory to save the log file.
         - base_name (str): The base name for the file (default is 'generation_log').
         - ext (str): The file extension to use (default is 'txt').
-        """        
-
+        """         
         with open(self.log_filename, "w", encoding = 'utf-8') as f:
             for line in self.logger.log_buffer:
                 f.write(f"{line}\n")
-
-        self.log(f"[SimpleKEScheduler] Generation log saved to {self.log_filename}")
+        self.log(f"[SimpleKEScheduler] Generation settings saved to {self.log_filename}")
+            
         self.logger.log_buffer.clear() 
+    
+    def save_image_plot(self):
+        if self.settings.get('graph_save_enable', False):                        
+            graph_plot = plot_sigma_sequence(
+                sigs[:i + 1],
+                i,
+                self.log_filename,
+                self.settings.get('graph_save_directory', 'modules/sd_simple_kes/image_generation_data'),
+                self.settings.get('graph_save_enable', False)
+            )
+            self.log(f"Sigma sequence plot saved to {graph_plot}")
     
     def load_config(self):
         try:
@@ -206,15 +202,12 @@ class SimpleKEScheduler:
     
     def apply_global_randomization(self):
         """Force randomization for all eligible settings by enabling _rand flags and re-randomizing values."""
-
         # First pass: turn on all _rand flags if corresponding _rand_min/_rand_max exists
         for key in list(self.settings.keys()):
             if key.endswith("_rand_min") or key.endswith("_rand_max"):
                 base_key = key.rsplit("_rand_", 1)[0]
                 rand_flag_key = f"{base_key}_rand"
                 self.settings[rand_flag_key] = True
-        
-
         # Step 2: If global_randomize is active, re-randomize all eligible keys
         if self.settings.get("global_randomize", False):           
             if key not in self.settings:
@@ -275,8 +268,7 @@ class SimpleKEScheduler:
         if randomization_type == 'symmetric':
             rand_min = default_value * (1 - randomization_percent)
             rand_max = default_value * (1 + randomization_percent)
-            self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")
-            
+            self.log(f"[Symmetric Randomization] {key_prefix}: Range {rand_min} to {rand_max}")            
 
         elif randomization_type == 'asymmetric':
             rand_min = default_value * (1 - randomization_percent)
@@ -375,9 +367,7 @@ class SimpleKEScheduler:
         - The progress tensor is computed linearly from 0 to 1 over the length of the sequence.
         - The method uses class attributes for step size factors, blend factors, and noise scaling.
         - This method modifies `sigs` in place.
-        """        
-         
-        #for i in range(len(sigmas_karras)): 
+        """                        
         for i in range(len(sigs)):
             if self.step_progress_mode == "linear":
                 progress_value = self.progress[i]
@@ -415,8 +405,6 @@ class SimpleKEScheduler:
             # Check 3: Max-mean difference converged
             self.delta_converged = self.delta_change < self.settings.get('recent_change_convergence_delta', 0.02)            
             
-                                           
-            
             if pre_pass:
                 if i >= 2:
                     sigma_rate = abs(self.blended_sigmas[i] - self.blended_sigmas[i - 1])
@@ -445,9 +433,7 @@ class SimpleKEScheduler:
                     else: 
                         self.sigma_variance = torch.var(sigs).item()
 
-
                     self.min_sigma_threshold = self.sigma_variance * self.settings.get('sigma_variance_scale', 0.05)  # scale factor can be tuned
-
                     self.log(f"\n--- Early Stopping Evaluation at Step {i+1} ---")
                     self.log(f"Current Blended Sigma: {self.blended_sigma:.6f}")
                     self.log(f"Sigma Variance: {self.sigma_variance:.6f}")
@@ -459,39 +445,31 @@ class SimpleKEScheduler:
                     # Reason for continuing (sigma still too high)
                     if self.blended_sigma > self.min_sigma_threshold:
                         self.log(f"Blended Sigma {self.blended_sigma:.6f} exceeds min sigma threshold {self.min_sigma_threshold:.6f} → Continuing.\n")
-                        
-                    
+                                            
                     # Start Early Stopping Checks                    
                     if self.early_stopping_method == "mean":
                         mean_change = sum(self.change_log) / len(self.change_log)
                         if mean_change < self.early_stopping_threshold:
-                            skipped_steps = len(sigmas_karras) - (i + 1)
-                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {mean_change:.6f}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")  
+                            skipped_steps = len(sigmas_karras) - (i)
+                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {mean_change:.6f}. Steps used: {i}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")
+                        self.save_image_plot()                        
 
                     elif self.early_stopping_method == "max":
                         #max_change = max(self.change_log)
                         if max_change < self.early_stopping_threshold:
-                            skipped_steps = len(sigmas_karras) - (i + 1)
-                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {max_change:.6f}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")  
-                            
+                            skipped_steps = len(sigmas_karras) - (i)
+                            self.log(f"Early stopping triggered by mean at step {i}. Mean change: {max_change:.6f}. Steps used: {i}/{len(sigmas_karras)}, steps skipped: {skipped_steps}") 
+                        self.save_image_plot()
+                                                    
                     elif self.early_stopping_method == "sum":
                         stable_steps = sum(
                             1 for j in range(1, len(self.change_log))
                             if abs(self.change_log[j]) < self.early_stopping_threshold * abs(sigs[j])
                         )
-
                         if stable_steps >= 0.8 * len(self.change_log):
-                            skipped_steps = len(sigmas_karras) - (i + 1)
-                            self.log(f"Early stopping triggered by sum at step {i}. Stable steps: {stable_steps}/{len(self.change_log)}. Steps used: {i + 1}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")
-                    if self.settings.get('graph_save_enable', False):                        
-                        graph_plot = plot_sigma_sequence(
-                            sigs[:i + 1],
-                            i,
-                            self.log_filename,
-                            self.graph_save_directory,
-                            self.settings.get('graph_save_enable', False)
-                        )
-                        self.log(f"Sigma sequence plot saved to {graph_plot}")
+                            skipped_steps = len(sigmas_karras) - (i)
+                            self.log(f"Early stopping triggered by sum at step {i}. Stable steps: {stable_steps}/{len(self.change_log)}. Steps used: {i}/{len(sigmas_karras)}, steps skipped: {skipped_steps}")
+                        self.save_image_plot()                        
                             
                 if self.relative_converged and self.max_converged and self.delta_converged: 
                     self.early_stop_triggered = True                    
@@ -502,7 +480,7 @@ class SimpleKEScheduler:
                     self.log(f"Delta Change: {delta_change:.6f} (Target: {self.settings.get('recent_change_convergence_delta', 0.02)})")                        
                     self.log(f"Early stopping criteria met at step {i+1} based on all convergence checks.")
                     self.predicted_stop_step = i
-
+                    #self.steps = self.predicted_stop_step
                     break        
             
         # === Final Pass ===
@@ -533,7 +511,7 @@ class SimpleKEScheduler:
                 if step_label:
                     if not pre_pass:  # Only log detailed steps in the final pass
                         self.log("\n" + "=" * 10 + "\n[Start of Sigma Sequence Logging]\n" + "=" * 10)
-                        self.log(f"[{step_label} - Step {i+1}/{len(sigmas_karras)}]"
+                        self.log(f"[{step_label} - Step {i}/{len(sigmas_karras)}]"
                                  f"\nStep Size: {self.step_size:.6f}"
                                  f"\nDynamic Blend Factor: {dynamic_blend_factor:.6f}"
                                  f"\nNoise Scale: {noise_scale:.6f}"
@@ -579,7 +557,7 @@ class SimpleKEScheduler:
                     self.log(f"Sigma Variance: {self.sigma_variance:.6f}")
         
         if pre_pass and self.early_stop_triggered:
-            return sigs[:self.predicted_stop_step + 1]  # Return only the usable sequence
+            return sigs[:self.predicted_stop_step]  # Return only the usable sequence        
         else:
             return sigs
    
@@ -625,7 +603,7 @@ class SimpleKEScheduler:
             pass
         except Exception as e:
             self.log(f"Error generating sigmas: {e}") 
-        ''' #possible legacy code
+        
         if len(self.sigmas_karras) < len(self.sigmas_exponential):
             # Pad `sigmas_karras` with the last value
             padding_karras = torch.full((len(self.sigmas_exponential) - len(self.sigmas_karras),), self.sigmas_karras[-1]).to(self.sigmas_karras.self.device)
@@ -634,7 +612,7 @@ class SimpleKEScheduler:
             # Pad `sigmas_exponential` with the last value
             padding_exponential = torch.full((len(self.sigmas_karras) - len(self.sigmas_exponential),), self.sigmas_exponential[-1]).to(self.sigmas_exponential.device)
             self.sigmas_exponential = torch.cat([self.sigmas_exponential, padding_exponential])
-        '''
+       
         # Now it's safe to compute sigs
         start = math.log(self.sigma_max)
         end = math.log(self.sigma_min)
@@ -647,7 +625,8 @@ class SimpleKEScheduler:
             # If sigs are all invalid, set a safe fallback
             self.sigma_min, self.sigma_max = self.min_threshold, self.min_threshold              
             self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
-         
+        
+        return self.sigmas_karras, self.sigmas_exponential, self.sigs
     
     def config_values(self):        
         
@@ -693,15 +672,15 @@ class SimpleKEScheduler:
             self.log(f"[Config Correction] Invalid early_stopping_method: {self.early_stopping_method}. Defaulting to 'mean'.")
             self.early_stopping_method = 'mean'
        
-    def prepass_compute_sigmas(self)->torch.Tensor:      
+    def prepass_compute_sigmas(self, skip_prepass = False)->torch.Tensor:   
         if self.steps is None:
             raise ValueError("Number of steps must be provided.")
         if isinstance(self.device, str):
             self.device = torch.device(self.device)
         self.config_values()        
         self.generate_sigmas_schedule()
-        #self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device) 
-        self.predicted_stop_step = self.steps - 1  # Default to full length if not stopped
+         
+        self.predicted_stop_step = self.steps if None else self.original_steps
         if self.N > len(self.sigs):
             self.N = len(self.sigs)
             self.log(f"[Sharpening Notice] Requested last {self.N} steps exceeds sequence length. Using entire sequence instead.")
@@ -711,17 +690,16 @@ class SimpleKEScheduler:
         self.blend_sigma_sequence(sigs = self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = True)        
         if torch.isnan(self.sigs).any() or torch.isinf(self.sigs).any():
             raise ValueError("Invalid sigma values detected (NaN or Inf).")
-        final_steps = self.sigs[:self.predicted_stop_step + 1].to(self.device)        
-        return final_steps
+        final_steps = self.sigs[:self.predicted_stop_step].to(self.device) 
+        # Store the results for later use in compute_sigmas
+        self.final_steps = final_steps
+        self.final_sigmas_karras = self.sigmas_karras
+        self.final_sigmas_exponential = self.sigmas_exponential        
+        self.log(f" Final Steps = {self.final_steps}. Predicted_stop_step = {self.predicted_stop_step}. Original requested steps = {self.steps}")
+        self.log(f"final sigmas karras: {self.final_sigmas_karras}")           
+            
     
-    def compute_sigmas(self, final_steps)->torch.Tensor:        
-        if self.steps is None:
-            raise ValueError("Number of steps must be provided.")
-        if isinstance(self.device, str):
-            self.device = torch.device(self.device)
-        if final_steps is not None and not isinstance(final_steps, int):
-            self.steps = len(final_steps) 
-         
+    def compute_sigmas(self)->torch.Tensor:  
         """
         Scheduler function that blends sigma sequences using Karras and Exponential methods with adaptive parameters.
 
@@ -750,7 +728,7 @@ class SimpleKEScheduler:
             "final_step_size", "initial_noise_scale", "final_noise_scale",
             "smooth_blend_factor", "step_size_factor", "noise_scale_factor", "rho"
         ]
-
+        
         for key in acceptable_keys:
             default_val = self.settings[key]
             value = self.get_random_or_default(key, default_val)
@@ -758,13 +736,21 @@ class SimpleKEScheduler:
             
         self.log(f"Using device: {self.device}")        
         self.config_values() 
-        self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device)        
-        self.generate_sigmas_schedule()  
+        self.generate_sigmas_schedule() 
+        if hasattr(self, 'final_sigmas_karras'):
+            self.sigs = torch.zeros_like(self.final_sigmas_karras).to(self.device)        
+        else:
+            self.sigs = torch.zeros_like(self.sigmas_karras).to(self.device)
          
-        self.blend_sigma_sequence(sigs=self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = False)
-        
-        self.sigma_variance = torch.var(self.sigs).item()  
-        
+         
+        #self.blend_sigma_sequence(sigs=self.sigs, sigmas_karras=self.sigmas_karras, sigmas_exponential=self.sigmas_exponential, pre_pass = False)
+        self.blend_sigma_sequence(
+            sigs=self.sigs,
+            sigmas_karras=self.final_sigmas_karras if hasattr(self, 'final_sigmas_karras') else self.sigmas_karras,
+            sigmas_exponential=self.final_sigmas_exponential if hasattr(self, 'final_sigmas_exponential') else self.sigmas_exponential,
+            pre_pass=False
+        )
+        self.sigma_variance = torch.var(self.sigs).item()          
         if self.sharpen_mode in ['last_n', 'both']:
             if self.sigma_variance < self.sigma_variance_threshold:
                 # Apply full sharpening
@@ -772,7 +758,6 @@ class SimpleKEScheduler:
                 sharpen_indices = torch.where(self.sharpen_mask < 1.0)[0].tolist()
                 self.sigs = self.sigs * self.sharpen_mask
                 self.log(f"[Sharpen Mask] Full sharpening applied (low variance). Steps: {sharpen_indices}")
-
             else:
                 # Apply sharpening only to the last N steps
                 recent_sigs = self.sigs[-self.N:]
@@ -796,7 +781,5 @@ class SimpleKEScheduler:
             self.sigs = self.sigs * self.sharpen_mask
             self.log(f"[Sharpen Mask] Full sharpening applied at steps: {sharpen_indices}")
 
-        
-        
-
+        #self.log(f"[DEBUG]Final Output: Skip Prepass: {self.skip_prepass}. Original requested steps: {self.original_steps}. Self.steps = {self.steps} for tensor sigs: {self.sigs})")
         return self.sigs.to(self.device)
