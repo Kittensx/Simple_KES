@@ -150,7 +150,7 @@ class SimpleKEScheduler:
         self.blend_weights = [self.blend_method_dict[method]['weight'] for method in self.blend_methods]        
         self.loaded_sigmas = None
         self.sigma_sequences = {}        
-        self.legacy_mode = False
+        
         self.schedule_type = None
         self.suffix = None
         self.ext = None
@@ -348,7 +348,7 @@ class SimpleKEScheduler:
         # Save logs to file
         if self.debug:
             self.save_generation_settings()
-
+        
         return sigmas
 
     def _safe_sigma_loader(self, cache_key):
@@ -586,7 +586,7 @@ class SimpleKEScheduler:
         self.logger.log_buffer.clear() 
         self.logger.prepass_log_buffer.clear()
     
-    def save_image_plot(self,i):
+    def save_image_plot(self, sigs, i):
         graph_plot = plot_sigma_sequence(
             self.sigs[:i + 1],
             i,
@@ -1413,61 +1413,105 @@ class SimpleKEScheduler:
             #logic for multiple schedulers  
             #self.load_blend_method_sigmas(mode=self.mode)             
         self.load_blend_method_sigmas(mode=self.mode) 
+        self.blend_pairs = []
+        self.active_methods = [method for method in self.blend_methods if self.blend_method_dict[method].get('weight', 1.0) > 0]
+        
         if self.blending_mode == 'default':
-            sigmas_a = self.sigmas_karras
-            sigmas_b = self.sigmas_exponential
-            label_a = 'Karras'
-            label_b = 'Exponential'
-            self.legacy_mode =True
-        else:
-            # Use the first two blend methods as the primary pair
-            method_a = self.blend_methods[0]
-            method_b = self.blend_methods[1]
-
-            sigmas_a = self.sigma_sequences[method_a]['sigmas']
-            sigmas_b = self.sigma_sequences[method_b]['sigmas']
-            label_a = method_a
-            label_b = method_b
-        
-        # Validation checks
-        if sigmas_a is None:
-            raise ValueError(f"Sigmas {label_a} failed to generate or assign correctly.")
-        if sigmas_b is None:
-            raise ValueError(f"Sigmas {label_b} failed to generate or assign correctly.")
-
-        # Match target lengths
-        target_length = min(len(sigmas_a), len(sigmas_b))
-        sigmas_a = sigmas_a[:target_length]
-        sigmas_b = sigmas_b[:target_length]
-
-        # Padding if needed
-        if len(sigmas_a) < len(sigmas_b):
-            padding = torch.full((len(sigmas_b) - len(sigmas_a),), sigmas_a[-1]).to(sigmas_a.device)
-            sigmas_a = torch.cat([sigmas_a, padding])
-        elif len(sigmas_a) > len(sigmas_b):
-            padding = torch.full((len(sigmas_a) - len(sigmas_b),), sigmas_b[-1]).to(sigmas_b.device)
-            sigmas_b = torch.cat([sigmas_b, padding])
-
-        self.log(f"Generated sigma sequences. {label_a}: {sigmas_a}, {label_b}: {sigmas_b}")
-
-        
-        if self.legacy_mode==True:  
-            if self.sigmas_exponential is None:
-                self._call_legacy_mode(schedule_type='exponential')
-
-            if self.sigmas_karras is None:
-                self._call_legacy_mode(schedule_type='karras')
-
-            self.log(f"Loaded sigmas_exponential and sigmas_karras from scheduler_registry.")
+            self._call_legacy_mode(schedule_type='exponential')
+            self._call_legacy_mode(schedule_type='karras')            
             
+            self.blend_pairs = []
+            self.blend_pairs.append({
+                'method_label': 'method_a',
+                'method': 'karras',
+                'sigmas': self.sigmas_karras
+            })
+            self.blend_pairs.append({
+                'method_label': 'method_b',
+                'method': 'exponential',
+                'sigmas': self.sigmas_exponential
+            })
+            
+           # ✅ Optional: Pad if needed (if you know some might be misaligned)
+            max_length = max(len(pair['sigmas']) for pair in self.blend_pairs)
+
+            for pair in self.blend_pairs:
+                if len(pair['sigmas']) < max_length:
+                    padding = torch.full((max_length - len(pair['sigmas']),), pair['sigmas'][-1]).to(pair['sigmas'].device)
+                    pair['sigmas'] = torch.cat([pair['sigmas'], padding])
+
+            self.log(f"All sigma sequences aligned to length: {max_length}")
+
+            # ✅ For legacy compatibility
+            sigmas_a = self.blend_pairs[0]['sigmas']
+            sigmas_b = self.blend_pairs[1]['sigmas']
+            label_a = self.blend_pairs[0]['method']
+            label_b = self.blend_pairs[1]['method']
+            if sigmas_a is None:
+                raise ValueError(f"Sigmas {label_a} failed to generate or assign correctly.")
+            if sigmas_b is None:
+                raise ValueError(f"Sigmas {label_b} failed to generate or assign correctly.")
         else:
-            #other scheduler logic
-            pass
+            if len(self.active_methods) == 1:
+                # Only one method, assign both to the same method
+                self.blend_pairs = []
+                method = self.active_methods[0]
+                self.blend_pairs.append({
+                    'method_label': 'method_a',
+                    'method': method,
+                    'sigmas': self.sigma_sequences[method]['sigmas']
+                })
+
+            elif len(self.active_methods) >= 2:
+                # Build blend_pairs dynamically for all active methods
+                self.blend_pairs = []
+                for idx, method in enumerate(self.active_methods):
+                    self.blend_pairs.append({
+                        'method_label': f'method_{chr(97 + idx)}',  # method_a, method_b, etc.
+                        'method': method,
+                        'sigmas': self.sigma_sequences[method]['sigmas']
+                    })
+
+                # Validation checks (loop version)
+                for pair in self.blend_pairs:
+                    if pair['sigmas'] is None:
+                        raise ValueError(f"Sigmas {pair['method']} failed to generate or assign correctly.")
+
+
+        # Skip length matching if only 1 method is enabled        
+        if len(self.blend_pairs) > 1:
+            target_length = min(len(pair['sigmas']) for pair in self.blend_pairs)
+
+            # Trim all to target length
+            for pair in self.blend_pairs:
+                pair['sigmas'] = pair['sigmas'][:target_length]
+
+            # Find the max length (in case any sequence is longer after trimming)
+            max_length = max(len(pair['sigmas']) for pair in self.blend_pairs)
+
+            for pair in self.blend_pairs:
+                if len(pair['sigmas']) < max_length:
+                    padding = torch.full((max_length - len(pair['sigmas']),), pair['sigmas'][-1]).to(pair['sigmas'].device)
+                    pair['sigmas'] = torch.cat([pair['sigmas'], padding])
+
+            self.log(f"All sigma sequences aligned to length: {max_length}")
+            
+            self.sigs = torch.zeros(target_length, device=self.blend_pairs[0]['sigmas'].device)
+        else:
+            # Only one method, set self.sigs directly
+            self.sigs = self.blend_pairs[0]['sigmas'].clone()
+             
+       
+        '''
         # Now it's safe to compute sigs        
         start = math.log(self.sigma_max)
         end = math.log(self.sigma_min)
-        self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()       
+        #self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()       
+        if self.sigs is None or self.force_rebuild_sigs:
+            self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()
 
+
+        
         # Ensure sigs contain valid values before using them
         if torch.any(self.sigs > 0):  
             self.sigma_min, self.sigma_max = self.sigs[self.sigs > 0].min(), self.sigs.max()            
@@ -1479,20 +1523,69 @@ class SimpleKEScheduler:
             return {
                 'karras': self.sigmas_karras,
                 'exponential': self.sigmas_exponential,
+                'blend_methods': self.blend_methods,
+                'all_sigmas': self.all_sigmas,
                 'sigs': self.sigs
             }
        
+        #sigma_lengths = [len(self.sigma_sequences[method]['sigmas']) for method in self.blend_methods]
+        #if len(set(sigma_lengths)) > 1:  # There are mismatched lengths
+            #self.validate_and_align_sigmas()
+            #self.sigs = torch.zeros(self.steps, device=self.device)
         sigma_lengths = [len(self.sigma_sequences[method]['sigmas']) for method in self.blend_methods]
-        if len(set(sigma_lengths)) > 1:  # There are mismatched lengths
+        if len(set(sigma_lengths)) > 1:
+            self.log("[Sigma Alignment] Detected mismatched sigma sequence lengths. Aligning...")
             self.validate_and_align_sigmas()
-            self.sigs = torch.zeros(self.steps, device=self.device)
             
         return {
             'blend_methods': self.blend_methods,
             'all_sigmas': self.all_sigmas,
             'sigs': self.sigs
         }
-   
+        '''
+        # Now it's safe to compute sigs        
+        #start = math.log(self.sigma_max)
+        #end = math.log(self.sigma_min)
+        #self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()
+        
+        
+        '''
+        if torch.any(self.sigs > 0):
+            self.sigma_min, self.sigma_max = self.sigs[self.sigs > 0].min(), self.sigs.max()
+        else:
+            # If sigs are all invalid, set a safe fallback
+            self.sigma_min = self.min_threshold
+            self.sigma_max = self.min_threshold
+            self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+
+            return {
+                'blend_methods': self.blend_methods,
+                'all_sigmas': self.all_sigmas,
+                'sigs': self.sigs
+            }
+
+        return {
+            'blend_methods': self.blend_methods,
+            'all_sigmas': self.all_sigmas,
+            'sigs': self.sigs
+        }
+        '''
+       
+        if not torch.any(self.sigs > 0):
+            self.sigma_min = self.min_threshold
+            self.sigma_max = self.min_threshold
+            self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+        else:
+            self.sigma_min = self.sigs[self.sigs > 0].min()
+            self.sigma_max = self.sigs.max()
+
+        return {
+            'blend_methods': self.blend_methods,
+            'all_sigmas': self.all_sigmas,
+            'sigs': self.sigs
+        }
+
+
 
     def call_scheduler_function(self, scheduler_func, **kwargs):
         """
