@@ -1,11 +1,9 @@
-import torch
-import torch.nn.functional as F
-import logging
 from modules.sd_simple_kes.get_sigmas import scheduler_registry
 from modules.sd_simple_kes.validate_config import validate_config
 from modules.sd_simple_kes.plot_sigma_sequence import plot_sigma_sequence
-from modules.sd_simple_kes.schedulers.karras_advanced_scheduler import get_sigmas_karras
-from modules.sd_simple_kes.schedulers.exponential_advanced_scheduler import get_sigmas_exponential
+import torch
+import torch.nn.functional as F
+import logging
 import os
 import yaml
 import random
@@ -18,16 +16,14 @@ import numpy as np
 import hashlib
 import glob
 import re
-import json
 import inspect
+import copy
 
 
 def simple_kes_scheduler(n: int, sigma_min: float, sigma_max: float, device: torch.device) -> torch.Tensor:
     scheduler = SimpleKEScheduler(n=n, sigma_min=sigma_min, sigma_max=sigma_max, device=device)
     return scheduler()
 
-
-    
 class SharedLogger:
     def __init__(self, debug=False):
         self.debug = debug
@@ -41,9 +37,6 @@ class SharedLogger:
         if self.debug:
             self.prepass_log_buffer.append(message)
    
-    
-
-    
 class SimpleKEScheduler:
     """
     SimpleKEScheduler
@@ -62,8 +55,7 @@ class SimpleKEScheduler:
         sigmas = scheduler.get_sigmas()
     """
     
-    
-    def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cpu", logger=None, **kwargs)->torch.Tensor:         
+    def __init__(self, n: int, sigma_min: Optional[float] = None, sigma_max: Optional[float] = None, device: torch.device = "cpu", logger=None, **kwargs)->torch.Tensor:   
         self.steps = n if n is not None else 10 
         self.original_steps = n
         self.device = torch.device(device if isinstance(device, str) else device)        
@@ -76,33 +68,45 @@ class SimpleKEScheduler:
             'logarithmic': 'logarithmic', 'log': 'logarithmic', 'l': 'logarithmic',
             'exponential': 'exponential', 'exp': 'exponential', 'e': 'exponential'
         }
-        # Temporarily hold overrides from kwargs
-        self._overrides = kwargs.copy()        
-        self.config_path = os.path.abspath(os.path.normpath(os.path.join("modules", "sd_simple_kes", "kes_config", "default_config.yaml")))
-        self.config_data = self.load_config()        
+        self._config_schema = {
+            'min_visual_sigma': (int, 10),
+            'safety_minimum_stop_step': (int, 10),
+            'auto_tail_smoothing': (bool, False),
+            'auto_stabilization_sequence': (list, [
+                'smooth_interpolation', 'append_tail', 'blend_tail', 'apply_decay', 'progressive_decay'
+            ]),            
+            'sharpen_variance_threshold': (float, 0.01),
+            'sharpen_last_n_steps': (int, 10),
+            'decay_pattern': (str, 'zero'),
+            'sigma_save_subfolder': (str, 'saved_sigmas'),
+            'load_sigma_cache': (bool, False),
+            'save_sigma_cache': (bool, False),
+            'graph_save_directory': (str, 'modules/sd_simple_kes/image_generation_data'),
+            'graph_save_enable': (bool, False),
+            'exp_power': (int, 2),
+            'recent_change_convergence_delta': (float, 0.02),
+            'sigma_variance_scale': (float, 0.05),
+            'allow_step_expansion': (bool, False),
+            'sharpen_mode': (str, 'full'),
+            'blend_midpoint': (float, 0.5),
+            'early_stopping_method': (str, 'mean'),
+            'save_prepass_sigmas': (bool, False),
+            'global_randomize': (bool, False),
+            'skip_prepass': (bool, False),
+            'load_prepass_sigmas': (bool, False)
+        }               
+        self._overrides = kwargs.copy()  #Temporarily hold overrides from kwargs
+        default_config_path = os.path.abspath(os.path.normpath(os.path.join("modules", "sd_simple_kes", "kes_config", "default_config.yaml")))
+        self.default_config = self._load_config(default_config_path)
+        user_config_path = os.path.abspath(os.path.normpath(os.path.join("modules", "sd_simple_kes", "kes_config", "user_config.yaml")))        
+        self.user_config = self._load_config(user_config_path)
+        self.config_data = {**self.default_config, **self.user_config} 
         self.config = self.config_data.copy()
         self.settings = self.config.copy() 
-                
-        # Apply overrides from kwargs if present
-        for k, v in self._overrides.items():
-            if k in self.settings:
-                self.settings[k] = v
-                setattr(self, k, v)        
-        
-        self.debug = self.settings.get("debug", False)
-        logger = SharedLogger(debug=self.debug)
-        self.logger=logger
-        self.log = self.logger.log
-        self.prepass_log = self.logger.prepass_log
-        validate_config(self.config, logger=self.logger)
-   
         for key, value in self.settings.items():            
             setattr(self, key, value)
-            
-        if self.settings.get("global_randomize", False):
-            self.apply_global_randomization()
-        self.settings = self.settings.copy()        
-        
+        if self.global_randomize:
+            self.apply_global_randomization()  
         self.re_randomizable_keys = [
             "sigma_min", "sigma_max", "start_blend", "end_blend", "sharpness",
             "early_stopping_threshold",
@@ -110,33 +114,63 @@ class SimpleKEScheduler:
             "initial_noise_scale", "final_noise_scale",
             "smooth_blend_factor", "step_size_factor", "noise_scale_factor", "rho"
         ]
-       
         for key in self.re_randomizable_keys:
             value = self.settings.get(key)
             if value is None:
                 raise KeyError(f"[KEScheduler] Missing required setting: {key}")
             setattr(self, key, value)  
-        self.auto_mode_enabled = self.settings.get('auto_tail_smoothing', False)            
-        self.auto_stabilization_sequence = self.settings.get('auto_stabilization_sequence', [
-            'smooth_interpolation', 'append_tail', 'blend_tail', 'apply_decay', 'progressive_decay'
-        ])
-        self.sigma_variance_threshold = self.settings.get('sharpen_variance_threshold', 0.01)         
-        self.N = self.settings.get('sharpen_last_n_steps', 10)
-        
+        self.debug = self.settings.get('debug', False)
+        #setup logging  
+        logger = SharedLogger(debug=kwargs.get('debug', False)) 
+        self.logger=logger
+        self.log = self.logger.log
+        self.prepass_log = self.logger.prepass_log 
+        self._validate_config_types() 
+        validate_config(self.config, logger=self.logger)
+        # Apply overrides from kwargs if present
+        for k, v in self._overrides.items():
+            if k in self.settings:
+                self.settings[k] = v
+                setattr(self, k, v)   
+        self.auto_mode_enabled = self.settings.get('auto_tail_smoothing', False) 
         self.initialize_generation_filename()
         self.relative_converged = False
         self.max_converged = False
         self.delta_converged = False
         self.early_stop_triggered = False
-        self.sigma_cache = {}
-        self.decay_pattern = self.settings.get('decay_pattern', 'zero')
+        self.sigma_cache = {}        
         self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
         self.cache_dir = os.path.join(self.BASE_DIR, 'cache')
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self.sigma_save_folder = os.path.join(self.cache_dir, self.sigma_save_subfolder)        
+        self.blend_method_dict = self.settings.get('blend_methods', {
+            'karras': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1},
+            'exponential': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1}
+        })
+        self.blend_methods = list(self.blend_method_dict.keys())
+        self.blend_weights = [self.blend_method_dict[method]['weight'] for method in self.blend_methods]        
+        self.loaded_sigmas = None
+        self.sigma_sequences = {}        
+        self.legacy_mode = False
+        self.schedule_type = None
+        self.suffix = None
+        self.ext = None
+        self._create_directories()
+        self._finalize_init()
         
-        self.sigma_save_subfolder = self.settings.get('sigma_save_subfolder', 'saved_sigmas')
-        self.sigma_save_folder = os.path.join(self.cache_dir, self.sigma_save_subfolder)
+    def _create_directories(self):
+        
+        os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.sigma_save_folder, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.extras_log_filename = os.path.join(
+            self.settings.get('log_save_directory', 'modules/sd_simple_kes/image_generation_data'),
+            f'all_extras_log_{timestamp}.txt'
+        )
+
+        
+     
+    def _finalize_init(self):
+        
         self.prepass_save_file = self.build_sigma_cache_filename(
             steps=self.steps,
             sigma_min=self.sigma_min,
@@ -146,7 +180,7 @@ class SimpleKEScheduler:
             decay_pattern=self.decay_pattern,
             cache_dir=self.sigma_save_folder,
             suffix='prepass',
-            ext = 'txt'
+            ext = 'pt'
         )
         self.final_save_file = self.build_sigma_cache_filename(
             steps=self.steps,
@@ -157,39 +191,109 @@ class SimpleKEScheduler:
             decay_pattern=self.decay_pattern,
             cache_dir=self.sigma_save_folder,
             suffix='final',
-            ext = 'txt'
+            ext = 'pt'
         )
-        self.blend_method_dict = self.settings.get('blend_methods', {
-            'karras': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1},
-            'exponential': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1}
-        })
+        self.load_blend_method_sigmas()
+    def _load_config(self, config_path, **kwargs):
+        self.logger = SharedLogger(debug=kwargs.get('debug', False))
+        
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                user_config = yaml.safe_load(f)
+                return user_config or {}  # Always return a dict, even if empty
+        except FileNotFoundError:
+            self.logger.log(f"Config file not found: {config_path}. Using empty config.")
+            return {}
+        except yaml.YAMLError as e:
+            self.logger.log(f"Error loading config file: {e}")
+            return {}
 
-        self.blend_methods = list(self.blend_method_dict.keys())
-        self.blend_weights = [self.blend_method_dict[method]['weight'] for method in self.blend_methods]        
-        self.loaded_sigmas = None
-        self.load_sigma_sequences()
-        self.legacy_mode = False
-        self.sigmas_karras = self.scheduler_registry.get('karras')(
+            
+    def _validate_config_types(self):  
+        '''
+        Both corrects self.settings with an updated validated config, and also writes a corrected_user_config file with the correct types
+        '''
+        validated_settings = {}
+        corrected_lines = []
+        
+        corrected_lines.append("# Corrected User Config (Invalid entries auto-corrected)\n")
+
+        for key, (expected_type, default_value) in self._config_schema.items():
+            value = self.settings.get(key, default_value)
+            if isinstance(value, expected_type):
+                validated_settings[key] = value
+                corrected_lines.append(f"{key}: {value}")
+            
+            else:
+                self.log(f"[Config Warning] Invalid type for '{key}': Expected {expected_type.__name__}, got {type(value).__name__}. Using default: {default_value}")
+                validated_settings[key] = default_value
+                corrected_lines.append(f"{key}: {default_value}  # Invalid type: {type(value).__name__}, replaced with default")
+
+        # Save the corrected config with comments
+        with open('corrected_user_config.yaml', 'w', encoding='utf-8') as f:
+            f.write('\n'.join(corrected_lines))
+        
+        self.settings.update(validated_settings)
+        
+        for key, value in self.settings.items():
+            setattr(self, key, value)
+
+        
+    def _log_extras_to_file(self, all_extras):
+        """
+        Logs the extras returned by each scheduler to a dedicated 'all_extras' log file.
+
+        This method iterates through the list of extras for each blend method and writes them
+        to a separate log file for easier tracking, debugging, and future analysis. 
+
+        Parameters:
+        ----------
+        all_extras : list
+            A list of extras returned by each scheduler, aligned with the blend_methods list.
+            Each item in the list corresponds to the extras provided by a specific scheduler.
+
+        Notes:
+        -----
+        - If extras are present, they are logged under their respective scheduler names.
+        - If extras contain complex objects, the method attempts to serialize them using JSON.
+        - Non-serializable extras are logged as raw text.
+
+        Purpose:
+        -------
+        This log file is intended for developers to track additional outputs that are not 
+        directly part of the sigma, tails, or decay sequences but may be useful for diagnostics, 
+        metadata, or advanced scheduler behaviors.
+        """
+        with open(self.extras_log_filename, 'a', encoding='utf-8') as f:
+            f.write("\n=== New Scheduler Extras ===\n")
+            for method, extras in zip(self.blend_methods, all_extras):
+                if extras:
+                    try:
+                        f.write(f"\nScheduler: {method}\n")
+                        f.write(json.dumps(extras, indent=2))
+                        f.write("\n")
+                    except TypeError:
+                        f.write(f"\nScheduler: {method}\n")
+                        f.write(f"Extras (non-serializable): {extras}\n")
+            f.write("\n============================\n")
+    def __call__(self):
+        # First pass: Run prepass to determine predicted_stop_step
+        if not self.skip_prepass:
+            self.prepass_compute_sigmas(
                 steps=self.steps,
                 sigma_min=self.sigma_min,
                 sigma_max=self.sigma_max,
                 rho=self.rho,
                 device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2] 
-        
-       
-
-    def __call__(self):
-        # First pass: Run prepass to determine predicted_stop_step
-        if not self.settings.get('skip_prepass', False):
-            self.prepass_compute_sigmas(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device, skip_prepass = False)
+                skip_prepass=self.skip_prepass  
+            )
             
 
-        if self.settings.get('load_prepass_sigmas', False):
+        if self.load_prepass_sigmas:
             self.generate_sigmas_schedule(mode='prepass')
 
-        if self.settings.get('load_sigma_cache', False):
+        if self.load_sigma_cache:
             self.generate_sigmas_schedule(mode='final')
 
         else:
@@ -247,49 +351,27 @@ class SimpleKEScheduler:
 
         return sigmas
 
-   
-    def load_sigma_sequences(self):
-        """
-        Loads all sigma sequences for each blend method dynamically from the scheduler registry.
-        """
-        self.sigma_sequences = {}
+    def _safe_sigma_loader(self, cache_key):
+        cache_folder = self.sigma_save_folder
 
-        for method in self.blend_methods:
-            self.method_config = self.blend_method_dict[method]
-            self.method_config[method] = {
-                'decay_pattern': self.method_config.get('decay_pattern', 'zero'),
-                'decay_mode': self.method_config.get('decay_mode', 'blend'),
-                'tail_steps': self.method_config.get('tail_steps', 1)
-            }
-            self.current_config = self.method_config[method]
-            
+        # Check if the folder exists and has files
+        if not os.path.exists(cache_folder) or not os.listdir(cache_folder):
+            self.log(f"[Cache Check] Cache folder {cache_folder} is empty or missing. Skipping load.")
+            return None  # Signal to recompute
 
-            sigma_func = self.scheduler_registry.get(method)
-            if sigma_func:
-                tails, decay, sigmas = self.call_scheduler_function(
-                    self.scheduler_registry.get(method),
-                    steps=self.steps,
-                    sigma_min=self.sigma_min,
-                    sigma_max=self.sigma_max,
-                    rho=self.rho,  # Only passed if the scheduler accepts it
-                    device=self.device,
-                    decay_pattern=self.current_config['decay_pattern'],  # Method-specific
-                    decay_mode=self.current_config['decay_mode'],        # Method-specific
-                    tail_steps=self.current_config['tail_steps']         # Method-specific
-                )
+        # Check if matching file exists
+        matching_files = [f for f in os.listdir(cache_folder) if cache_key in f and f.endswith('.pt')]
 
-                self.sigma_sequences[method] = {
-                    'sigmas': sigmas,
-                    'tails': tails,
-                    'decay': decay
-                }
-                setattr(self, f"sigmas_{method}", sigmas)
-                #this gives us self.sigmas_karras, self.sigmas_exponential, self.sigmas_geometric, etc
-            else:
-                self.log(f"[Warning] Unknown sigma method: {method}")
-        self.all_sigmas = [self.sigma_sequences[method]['sigmas'] for method in self.blend_methods]
-        self.all_tails = [self.sigma_sequences[method]['tails'] for method in self.blend_methods]
-        self.all_decays = [self.sigma_sequences[method]['decay'] for method in self.blend_methods]
+        if not matching_files:
+            self.log(f"[Cache Check] No matching cache file found for key: {cache_key}. Skipping load.")
+            return None  # Signal to recompute
+
+        # If matching file found, load it
+        filename = os.path.join(cache_folder, matching_files[0])
+        self.log(f"[Cache Hit] Loading sigma cache from: {filename}")
+        loaded_data = torch.load(filename, map_location=self.device)
+        return loaded_data['sigma_values'].to(self.device)    
+        
     def call_scheduler(self, method_name, *args, **kwargs):
         sigma_sequence = getattr(self, f"sigmas_{method_name}")  
         if sigma_sequence is None:
@@ -350,169 +432,128 @@ class SimpleKEScheduler:
             return 1
     
     def get_sigma_with_cache(self, steps, sigma_min, sigma_max, rho=7.0, device='cpu',
-                         schedule_type='karras', decay_pattern=None, cache_dir=None,
-                         suffix=None, ext=None, mode=None):
+                         schedule_type='karras', decay_pattern=None, cache_dir=None, cache_file=None,
+                         suffix=None, ext=None, mode=None, cache_key = None):
+        self.steps = steps
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.rho = rho
+        self.device = device
+        self.schedule_type = schedule_type
+        self.decay_pattern = decay_pattern
+        self.cache_dir = cache_dir
+        self.cache_file = cache_file
+        self.suffix = suffix
+        self.ext = ext
+        self.mode = mode
+        self.cache_key = cache_key
 
-        self.load_sigma_cache = self.settings.get('load_sigma_cache', False)
-        self.save_sigma_cache = self.settings.get('save_sigma_cache', False)
+        # Try to retrieve from in-memory cache first
+        cached_sigmas = self.get_sigma_from_cache(cache_key)
         
+        if cached_sigmas is not None:
+            return cached_sigmas
 
+        # If sigma is randomized → always generate new
         if self.is_sigma_randomized():
-            sigmas = self._generate_sigmas(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern)
+            _, _, _, sigmas = self._generate_sigmas(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern)
+            self.sigma_cache[cache_key] = sigmas
             return sigmas
 
+        # If nothing is loaded yet → generate and cache
         if self.loaded_sigmas is None:
-            sigmas = self._generate_sigmas(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern)
+            _, _, _, sigmas = self._generate_sigmas(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern)
             self.loaded_sigmas = sigmas
+            self.sigma_cache[cache_key] = sigmas
+            return sigmas
 
+        # Handle file cache modes
         if mode == 'prepass':
             self.cache_file = self.prepass_save_file
-            if not self.load_prepass_sigmas:
-                sigmas = self._generate_sigmas(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern)
-                self.loaded_sigmas = sigmas
-
         elif mode == 'final':
             self.cache_file = self.final_save_file
-            if not self.load_prepass_sigmas:
-                sigmas = self._generate_sigmas(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern)
-                self.loaded_sigmas = sigmas
-
-        elif not mode:
-            self.cache_file = self.build_sigma_cache_filename(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern, cache_dir)
-            sigmas = self._generate_sigmas(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, schedule_type, self.decay_pattern)
-
-        if mode == 'prepass' or mode == 'final':
-            if self.load_prepass_sigmas:
-                loaded_sigmas = self.load_sigmas_with_hash_validation(
-                    filename=self.cache_file,
-                    steps=steps,
-                    sigma_min=sigma_min,
-                    sigma_max=sigma_max,
-                    rho=rho,
-                    device=device,
-                    schedule_type=schedule_type,
-                    decay_pattern=decay_pattern
-                )
-                self.loaded_sigmas = loaded_sigmas
-                return self.loaded_sigmas.to(device)
-
         else:
-            self.log(f"[Cache Miss] Recalculating sigma schedule for: {self.cache_file}")
-            self.log(f"sigmas in get_sigma_with_cache: {sigmas}")
-            return sigmas
+            self.cache_file = self.build_sigma_cache_filename(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, cache_dir)
 
-    def load_sigmas_with_hash_validation(self, filename, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, save_data=None, suffix=None):
-        try:
-            loaded_data = torch.load(filename, map_location=self.device)
-            self.loaded_sigmas = loaded_data['sigma_values'].to(self.device)
-            loaded_hash = loaded_data['sigma_hash']
+        # Load from file cache if enabled
+        if mode in ['prepass', 'final'] and self.load_prepass_sigmas:
+            loaded_sigmas = self.load_sigmas_with_hash_validation(
+                filename=self.cache_file,
+                steps=steps,
+                sigma_min=sigma_min,
+                sigma_max=sigma_max,
+                rho=rho,
+                device=device,
+                schedule_type=schedule_type,
+                decay_pattern=decay_pattern,
+                cache_key = cache_key
+            )
 
-            expected_hash = self.generate_sigma_hash(steps, sigma_min, sigma_max, rho, schedule_type, decay_pattern, save_data, suffix)
-
-            if loaded_hash != expected_hash:
-                self.log(f"[Sigma Validator] Hash mismatch. Expected: {expected_hash}, Found: {loaded_hash}. Recalculating.")
-                return None  # Return None to signal the scheduler to recalculate
+            if loaded_sigmas is not None:
+                self.loaded_sigmas = loaded_sigmas
+                self.sigma_cache[cache_key] = loaded_sigmas
+                return loaded_sigmas.to(device)
             else:
-                self.log(f"[Sigma Validator] Hash validated successfully for file: {filename}")
-                return self.loaded_sigmas
+                self.log("[Cache Recovery] Cache load failed. Recalculating sigma schedule.")
+        '''
+        # Cache miss → recalculate
+        self.log(f"[Cache Miss] Recalculating sigma schedule for: {self.cache_file}")
+        _, _, _, sigmas = self._generate_sigmas(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern)
+        self.sigma_cache[cache_key] = sigmas
+        '''
+        return sigmas
 
-        except Exception as e:
-            self.log("[Cache Recovery] Sigma cache invalid or missing. Recalculating sigmas.")
-            _, _, sigmas = self._generate_sigmas(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern)
-            return sigmas
 
-    def generate_sigma_hash(self, steps, sigma_min, sigma_max, rho, schedule_type, decay_pattern, save_data=None, suffix=None):
-        data_string = f'{steps}_{sigma_min}_{sigma_max}_{rho}_{schedule_type}_{decay_pattern}_{suffix}'
+    def load_sigmas_with_hash_validation(self, filename, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, save_data=None, cache_key = None, suffix=None):
+        if self.load_prepass_sigmas:
+            if cache_key:
+                try:
+                    loaded_data = torch.load(filename, map_location=self.device)
+                    self.loaded_sigmas = loaded_data['sigma_values'].to(self.device)
+                    loaded_hash = loaded_data['sigma_hash']
+
+                    expected_hash = self.generate_sigma_hash(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, save_data, suffix)
+
+                    if loaded_hash != expected_hash:
+                        self.log(f"[Sigma Validator] Hash mismatch. Expected: {expected_hash}, Found: {loaded_hash}. Recalculating.")
+                        return None  # Return None to signal the scheduler to recalculate
+                    else:
+                        self.log(f"[Sigma Validator] Hash validated successfully for file: {filename}")
+                        return self.loaded_sigmas
+
+                except Exception as e:
+                    self.log("[Cache Recovery] Sigma cache invalid or missing. Recalculating sigmas.")            
+                    _, _, _, sigmas = self._generate_sigmas(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern)
+                    return sigmas
+
+   
+    def generate_sigma_hash(self, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, save_data=None, suffix=None):
+        data_string = f'{steps}_{sigma_min}_{sigma_max}_{rho}_{device}_{schedule_type}_{decay_pattern}_{suffix}'
         hash_object = hashlib.sha256(data_string.encode())
         return hash_object.hexdigest()[:12]  # Use first 12 characters for compact ID
         
-    def _generate_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern=None, decay_mode = None, tail_steps=None):
-        #Returns not necessary - but added for readability
-        if schedule_type == 'karras':
-            self.sigmas_karras = self.scheduler_registry.get('karras')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                rho=self.rho,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]  # Index 2 to grab only sigmas from (tails, decay, sigmas)
-            return self.sigmas_karras
+    def _generate_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern=None, decay_mode=None, tail_steps=None):
+        scheduler_func = self.scheduler_registry.get(schedule_type)
 
-        elif schedule_type == 'exponential':
-            self.sigmas_exponential = self.scheduler_registry.get('exponential')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            return self.sigmas_exponential
-            
-        elif schedule_type == 'geometric':
-            self.sigmas_geometric = self.scheduler_registry.get('geometric')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            return self.sigmas_geometric
-
-        elif schedule_type == 'harmonic':
-            self.sigmas_harmonic = self.scheduler_registry.get('harmonic')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            return self.sigmas_harmonic
-
-        elif schedule_type == 'logarithmic':
-            self.sigmas_logarithmic = self.scheduler_registry.get('logarithmic')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            return self.sigmas_logarithmic
-        elif schedule_type == 'euler':
-            self.sigmas_euler = self.scheduler_registry.get('euler')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device                
-            )[2]
-            return self.sigmas_euler
-        elif schedule_type == 'euler_advanced':
-            self.sigmas_euler_advanced = self.scheduler_registry.get('euler_advanced')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            return self.sigmas_euler_advanced
-        
-
-        #elif schedule_type == 'heun':
-        #    return get_sigmas_heun(steps, sigma_min, sigma_max, device, decay_pattern)
-
-        #elif schedule_type == 'euler':
-        #    return get_sigmas_euler(steps, sigma_min, sigma_max, device, decay_pattern)
-
-        #elif schedule_type == '' or schedule_type is None:
-        #    return ''
-
-        else:
+        if scheduler_func is None:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
 
-        
-      
+        tails, decay, extras, sigmas = self.call_scheduler_function(
+            scheduler_func,
+            steps=steps,
+            sigma_min=sigma_min,
+            sigma_max=sigma_max,
+            rho=rho,
+            device=device,
+            decay_pattern=decay_pattern,
+            decay_mode=decay_mode,
+            tail_steps=tail_steps
+        )
 
-    
+        return tails, decay, extras, sigmas
+
+        
+
     def initialize_generation_filename(self, folder=None, base_name="generation_log", ext="txt"):
         """
         Initialize the log filename early so it can be used throughout the process.
@@ -550,23 +591,13 @@ class SimpleKEScheduler:
             self.sigs[:i + 1],
             i,
             self.log_filename,
-            self.settings.get('graph_save_directory', 'modules/sd_simple_kes/image_generation_data'),
-            self.settings.get('graph_save_enable', False)
+            self.graph_save_directory,
+            self.graph_save_enable
         )
         self.log(f"Sigma sequence plot saved to {graph_plot}")
 
     
-    def load_config(self):
-        try:
-            with open(self.config_path, 'r', encoding = 'utf-8') as f:
-                user_config = yaml.safe_load(f)
-                return user_config
-        except FileNotFoundError:
-            self.log(f"Config file not found: {self.config_path}. Using empty config.")
-            return {}
-        except yaml.YAMLError as e:
-            self.log(f"Error loading config file: {e}")
-            return {}
+    
     
     def apply_global_randomization(self):
         """Force randomization for all eligible settings by enabling _rand flags and re-randomizing values."""
@@ -577,7 +608,7 @@ class SimpleKEScheduler:
                 rand_flag_key = f"{base_key}_rand"
                 self.settings[rand_flag_key] = True
         # Step 2: If global_randomize is active, re-randomize all eligible keys
-        if self.settings.get("global_randomize", False):           
+        if self.global_randomize:           
             if key not in self.settings:
                 raise KeyError(f"[apply_global_randomization] Missing required key: {key}")
 
@@ -718,8 +749,72 @@ class SimpleKEScheduler:
                 return value.item()
         return value  # Already a float
 
+    def _call_legacy_mode(self, schedule_type):
+        # Validate schedule_type
+        if schedule_type not in ['karras', 'exponential']:
+            self.log(f"[Legacy Mode] Unsupported schedule_type: {schedule_type}")
+            return
+
+        # Dynamically set target attribute
+        target_attr = f"sigmas_{schedule_type}"
+
+        scheduler_func = self.scheduler_registry.get(schedule_type)
+
+        tails, decay, extras, sigmas = self.call_scheduler_function(
+            scheduler_func,
+            steps=self.steps,
+            sigma_min=self.sigma_min,
+            sigma_max=self.sigma_max,
+            rho=self.rho,
+            device=self.device,
+            decay_pattern=self.decay_pattern
+        )
+
+        # Assign to self.sigmas_karras or self.sigmas_exponential dynamically
+        setattr(self, target_attr, sigmas)
+
+        self.log(f"[Legacy Mode] Loaded sigma sequence for {schedule_type}. Assigned to self.{target_attr}")
+
 
     def blend_sigma_sequence(self, sigmas_karras=None, sigmas_exponential=None, pre_pass=False, blend_methods=None, blend_weights=None):
+        # Filter out schedulers with zero weight
+        active_methods = [
+            method for method, config in self.blend_method_dict.items() if config.get('weight', 1.0) > 0.0
+        ]
+        # Fallback if all weights are zero
+        if not active_methods:
+            self.log("[Blend Config] All weights are zero. Falling back to default blend (karras + exponential).")
+            '''
+            # Values set in init, placed here for reference
+            self.blend_method_dict = {
+                'karras': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1},
+                'exponential': {'weight': 1.0, 'decay_pattern': 'zero', 'decay_mode': 'append', 'tail_steps': 1}
+            }
+            '''
+            active_methods = list(self.blend_method_dict.keys())
+
+        self.blend_methods = active_methods
+
+        # Rebuild sigma lists        
+        self.blend_weights = [self.blend_method_dict[m]['weight'] for m in self.blend_methods]
+
+        # Edge Case: No active schedulers
+        if len(self.blend_methods) == 0:
+            raise ValueError("[SimpleKEScheduler] No active schedulers selected. Please check your blend configuration.")
+            #Should never happen because we default to init value for default if 0.
+
+        # Edge Case: Only one scheduler (direct usage)
+        if len(self.blend_methods) == 1:
+            self.log(f"[Blend] Only one active scheduler: {self.blend_methods[0]}. Skipping blending, using it directly.")
+            self.sigs = self.sigma_sequences[self.blend_methods[0]]['sigmas']
+            #return self.sigs  # Do not Exit early!! Continue function
+
+        if len(self.blend_methods) == 2:
+            self.blending_mode = 'smooth_blend'
+        elif len(self.blend_methods) > 2:
+            self.blending_mode = 'weights'
+
+        
         if not self.allow_step_expansion and self.auto_mode_enabled:
             self.auto_mode_enabled = False
             self.log("[Auto Mode] Step expansion disallowed. Auto mode forcibly disabled.")
@@ -764,20 +859,11 @@ class SimpleKEScheduler:
         - The method uses class attributes for step size factors, blend factors, and noise scaling.
         - This method modifies `sigs` in place.
         """    
-        self.sigmas_karras = self.scheduler_registry.get('karras')(
-            steps=self.steps,
-            sigma_min=self.sigma_min,
-            sigma_max=self.sigma_max,
-            device=self.device,
-            decay_pattern=self.decay_pattern
-        )[2]
-        self.sigmas_exponential = self.scheduler_registry.get('exponential')(
-            steps=self.steps,
-            sigma_min=self.sigma_min,
-            sigma_max=self.sigma_max,
-            device=self.device,
-            decay_pattern=self.decay_pattern
-        )[2]
+        if self.sigmas_exponential is None:
+            self._call_legacy_mode(schedule_type='exponential')
+
+        if self.sigmas_karras is None:
+            self._call_legacy_mode(schedule_type='karras')
         
         self.prepass_blended_sigmas = []
         self.blended_sigma = None
@@ -786,7 +872,7 @@ class SimpleKEScheduler:
             if self.step_progress_mode == "linear":
                 progress_value = self.progress[i]
             elif self.step_progress_mode == "exponential":
-                progress_value = self.progress[i] ** self.settings.get("exp_power", 2)
+                progress_value = self.progress[i] ** self.exp_power
             elif self.step_progress_mode == "logarithmic":
                 progress_value = torch.log1p(self.progress[i] * (torch.exp(torch.tensor(1.0)) - 1))
             elif self.step_progress_mode == "sigmoid":
@@ -795,7 +881,7 @@ class SimpleKEScheduler:
                 progress_value = self.progress[i]  # Fallback to linear (previous version used)  
             
             self.dynamic_blend_factor = self.start_blend * (1 - self.progress[i]) + self.end_blend * self.progress[i]
-            self.smooth_blend = torch.sigmoid((self.dynamic_blend_factor - 0.5) * self.smooth_blend_factor)
+            self.smooth_blend = torch.sigmoid((self.dynamic_blend_factor - self.blend_midpoint) * self.smooth_blend_factor)
             self.noise_scale = self.initial_noise_scale * (1 - self.progress[i]) + self.final_noise_scale * self.progress[i] * self.noise_scale_factor   
             self.step_size = self.initial_step_size * (1 - progress_value) + self.final_step_size * progress_value * self.step_size_factor
             if self.blending_mode == 'default':
@@ -812,14 +898,7 @@ class SimpleKEScheduler:
                  
                            
             elif self.blending_mode == 'weights' or (self.blending_mode == 'auto' and len(self.blend_methods) > 2):
-                # Multi-method weight-based blending                
-                # Smooth blend between any two methods (not just Karras + Exponential)
-                          
-               
-                #DEBUG LOOP
-                #for idx, s in enumerate(self.all_sigmas):
-                    #self.log(f"[DEBUG]Sigma sequence {idx} shape: {s.shape}")
-
+                
                 
                 if self.blend_weights is None:
                     self.blend_weights = [1.0] * len(self.all_sigmas)
@@ -828,9 +907,7 @@ class SimpleKEScheduler:
 
                 # Resolve weights based on blending style
                 resolved_blend_weights = self.resolve_blend_weights(self.blend_weights, self.blending_style)
-
-                #weighted_sum = sum(w * s[i] for w, s in zip(resolved_blend_weights, self.all_sigmas))
-                #weighted_sum = sum(w * s[i].item() if isinstance(s[i], torch.Tensor) else w * s[i] for w, s in zip(resolved_blend_weights, self.all_sigmas))
+                
                 weighted_sum = sum(w * self.extract_scalar(s[i]) for w, s in zip(resolved_blend_weights, self.all_sigmas))
 
 
@@ -842,25 +919,24 @@ class SimpleKEScheduler:
 
             
             self.sigs[i] = self.blended_sigma * self.step_size * self.noise_scale
-
-           
             self.change = torch.abs(self.sigs[i] - self.sigs[i - 1])
-            self.change_log.append(self.change.item())
-            relative_sigma_progress = (self.blended_sigma - self.sigs[-1].item()) / self.blended_sigma                                
+            # Safely extract scalar for both tensor and float
+            self.change_log.append(self.extract_scalar(self.change))
+            relative_sigma_progress = (self.blended_sigma - self.sigs[-1].item()) / self.blended_sigma                            
             recent_changes = torch.abs(torch.tensor(self.change_log[-5:]))
             max_change = torch.max(recent_changes).item()                        
             mean_change = torch.mean(recent_changes).item()
             #percent_of_threshold = (max_change / self.early_stopping_threshold) * 100                                        
             self.delta_change = abs(max_change - mean_change)
-            self.blended_sigmas.append(self.blended_sigma.item()) 
-                        
-            
+            #self.blended_sigmas.append(self.blended_sigma.item()) 
+            self.blended_sigmas.append(self.extract_scalar(self.blended_sigma))
+
             # Check 1: Relative sigma progress
             self.relative_converged = relative_sigma_progress < 0.05
             # Check 2: Max recent sigma change
             self.max_converged = max_change < self.early_stopping_threshold
             # Check 3: Max-mean difference converged
-            self.delta_converged = self.delta_change < self.settings.get('recent_change_convergence_delta', 0.02)            
+            self.delta_converged = self.delta_change < self.recent_change_convergence_delta            
             
             if pre_pass:
                 self.prepass_blended_sigmas=self.blended_sigmas.copy()
@@ -893,7 +969,7 @@ class SimpleKEScheduler:
                     else: 
                         self.sigma_variance = torch.var(self.sigs).item()
 
-                    self.min_sigma_threshold = self.sigma_variance * self.settings.get('sigma_variance_scale', 0.05)  # scale factor can be tuned
+                    self.min_sigma_threshold = self.sigma_variance * self.sigma_variance_scale  # scale factor can be tuned
                     self.prepass_log(f"\n--- Early Stopping Evaluation at Step {i} ---")
                     self.prepass_log(f"Current Blended Prepass Sigma: {self.prepass_blended_sigma:.6f}")
                     self.prepass_log(f"Sigma Variance: {self.sigma_variance:.6f}")
@@ -934,12 +1010,13 @@ class SimpleKEScheduler:
                         self.prepass_log(f"Relative Sigma Progress: {relative_sigma_progress:.6f}")
                         self.prepass_log(f"Max Recent Sigma Change: {max_change:.6f}")
                         self.prepass_log(f"Mean Recent Sigma Change: {mean_change:.6f}")
-                        self.prepass_log(f"Delta Change: {delta_change:.6f} (Target: {self.settings.get('recent_change_convergence_delta', 0.02)})")                        
+                        self.prepass_log(f"Delta Change: {delta_change:.6f} (Target: {self.recent_change_convergence_delta})")                        
                         self.prepass_log(f"Early stopping criteria met at step {i+1} based on all convergence checks.")
                         self.predicted_stop_step = i
                         #self.steps = self.predicted_stop_step
                         self.save_image_plot(self.sigs, i)
-                        break        
+                        break     
+            
             
             # === Final Pass ===         
             if not pre_pass:               
@@ -978,7 +1055,8 @@ class SimpleKEScheduler:
                   
                 if i > 0:
                     self.change = torch.abs(self.sigs[i] - self.sigs[i - 1])
-                    self.change_log.append(self.change.item())
+                    #self.change_log.append(self.change.item())
+                    self.change_log.append(self.extract_scalar(self.change))
 
                 # Early Stopping Evaluation
                 if i > self.safety_minimum_stop_step and len(self.change_log) > 5:                                 
@@ -990,7 +1068,9 @@ class SimpleKEScheduler:
                     # Optional: Show variance but no need to stop on it
                     self.sigma_variance = torch.var(self.sigs).item() if self.device != 'cpu' else np.var(self.blended_sigmas)
                     self.log(f"Sigma Variance: {self.sigma_variance:.6f}")
-        
+            if self.graph_save_enable:
+                self.save_image_plot(self.sigs, i)
+                
         #apply tails and decay after the loop finishes
         # Finished core sigma blending  
         if not self.auto_mode_enabled:        
@@ -1058,10 +1138,10 @@ class SimpleKEScheduler:
             return self.sigs
     def run_auto_stabilization(self):
         #This function works as intended, but is blocked by default if programs don't let schedulers create a sigma schedule longer than requested steps.
-        if not self.settings.get('allow_step_expansion', False):
+        if not self.allow_step_expansion:
             self.log("[Auto Mode] Step expansion is disabled by configuration. Skipping auto stabilization.")
             return self.sigs
-        if self.settings.get('allow_step_expansion', False):            
+        if self.allow_step_expansion:            
             unstable = self.detect_sequence_instability()
 
             if not unstable:
@@ -1227,7 +1307,7 @@ class SimpleKEScheduler:
 
 
             sigma_func = self.scheduler_registry[method]
-            tails, decay, sigmas = self.call_scheduler_function(
+            tails, decay, extras, sigmas = self.call_scheduler_function(
                 self.scheduler_registry.get(method),
                 steps=self.steps,
                 sigma_min=self.sigma_min,
@@ -1238,13 +1318,20 @@ class SimpleKEScheduler:
                 decay_mode=self.current_config['decay_mode'],        # Method-specific
                 tail_steps=self.current_config['tail_steps']         # Method-specific
             )
-
-            
+            self.sigma_sequences[method] = {
+                    'sigmas': sigmas,
+                    'tails': tails,
+                    'decay': decay,
+                    'extras': extras
+                }
+            setattr(self, f"sigmas_{method}", sigmas)                      
            
-            self.all_sigmas = [self.sigma_sequences[method]['sigmas'] for method in self.blend_methods]
-            self.all_tails = [self.sigma_sequences[method]['tails'] for method in self.blend_methods]
-            self.all_decays = [self.sigma_sequences[method]['decay'] for method in self.blend_methods]
-            self.all_sigmas.append(sigmas)
+        self.all_sigmas = [self.sigma_sequences[method]['sigmas'] for method in self.blend_methods]
+        self.all_tails = [self.sigma_sequences[method]['tails'] for method in self.blend_methods]
+        self.all_decays = [self.sigma_sequences[method]['decay'] for method in self.blend_methods]
+        self.all_extras = [self.sigma_sequences[method].get('extras', []) for method in self.blend_methods]
+        self._log_extras_to_file(self.all_extras)
+        self.all_sigmas.append(sigmas)
 
         # Optionally log which schedules were loaded
         self.log(f"Loaded sigma schedules for blend methods: {self.blend_methods} using mode: {mode}")
@@ -1267,7 +1354,7 @@ class SimpleKEScheduler:
                 self.all_sigmas[idx] = torch.cat([sigmas, padding])
 
         self.log(f"Validated and aligned all sigma sequences to length {target_length}.")
-
+     
     def generate_sigmas_schedule(self, mode=None):
         """
         Generates the sigma schedules required for the hybrid blending process.
@@ -1290,173 +1377,198 @@ class SimpleKEScheduler:
         and the final pass (for polished sigma application), ensuring both passes are synchronized 
         with the current step count and randomization settings.
         """
-        self.all_sigmas = []
-        #print(f"Mode in generate_sigmas_schedule: {mode}. Self.blending_mode = {self.blending_mode}")
-        #if self.blending_mode == 'smooth_blend' or (self.blending_mode == 'auto' and len(self.blend_methods) == 2):
-        for method in self.blend_methods:
-            self.method_config = self.blend_method_dict[method]
-            self.method_config[method] = {
-                'decay_pattern': self.method_config.get('decay_pattern', 'zero'),
-                'decay_mode': self.method_config.get('decay_mode', 'blend'),
-                'tail_steps': self.method_config.get('tail_steps', 1)
-            }
-            self.current_config = self.method_config[method]
+        #self.cache_key= self.generate_sigma_hash(self.steps, self.sigma_min, self.sigma_max, self.rho, self.device, self.schedule_type, self.decay_pattern, self.suffix or None)
+        # ✅ Clean Mode Selection
+        if mode == 'prepass':
+            if self.load_prepass_sigmas:
+                self.cache_file = self.prepass_save_file
+            self.mode = 'prepass'
 
-            sigma_func = scheduler_registry[method]
-            tails, decay, sigmas = self.call_scheduler_function(
-                self.scheduler_registry.get(method),
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,
-                rho=self.rho,  # Only passed if the scheduler accepts it
-                device=self.device,
-                decay_pattern=self.current_config['decay_pattern'],  # Method-specific
-                decay_mode=self.current_config['decay_mode'],        # Method-specific
-                tail_steps=self.current_config['tail_steps']         # Method-specific
-            )
+        elif mode == 'final':
+            if self.load_sigma_cache:
+                self.cache_file = self.final_save_file
+            self.mode = 'final'
 
-            #self.all_sigmas.append(sigmas)
-        self.load_blend_method_sigmas()
-        if mode == 'prepass' and self.blending_mode == 'default':           
-            self.sigmas_karras = self.get_sigma_with_cache(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device, schedule_type='karras', decay_pattern = self.decay_pattern, mode='prepass')  
-            self.sigmas_exponential = self.get_sigma_with_cache(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device, schedule_type='exponential', decay_pattern = self.decay_pattern, mode='prepass')
-            self.legacy_mode =True
         else:
-            self.load_blend_method_sigmas(mode='prepass')
-            
-        if mode == 'final' and self.blending_mode == 'default':            
-            self.sigmas_karras = self.get_sigma_with_cache(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, rho=self.rho, device=self.device, schedule_type='karras', decay_pattern = self.decay_pattern, mode='final')  
-            self.sigmas_exponential = self.get_sigma_with_cache(steps=self.steps, sigma_min=self.sigma_min, sigma_max=self.sigma_max, device=self.device, schedule_type='exponential', decay_pattern = self.decay_pattern, mode='final') 
-            self.legacy_mode =True
-        else:
-            self.load_blend_method_sigmas(mode='final')        
+            self.mode = None
+            self.cache_file = None  # Optional, for safety
         
-        
-        if self.legacy_mode==True:
-            
-            self.sigmas_exponential = self.scheduler_registry.get('exponential')(
-                steps=self.steps,
-                sigma_min=self.sigma_min,
-                sigma_max=self.sigma_max,                
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]
-            self.sigmas_karras = self.scheduler_registry.get('karras')(
+        '''
+        if self.cache_file:          
+            sigmas = self.get_sigma_with_cache(
                 steps=self.steps,
                 sigma_min=self.sigma_min,
                 sigma_max=self.sigma_max,
                 rho=self.rho,
-                device=self.device,
-                decay_pattern=self.decay_pattern
-            )[2]                
+                device=self.device,                    
+                decay_pattern=self.decay_pattern,
+                cache_file=self.cache_file,
+                mode=self.mode
+                #cache_key = self.cache_key
+            )
+            return sigmas
+        '''
             
-            if self.sigmas_exponential == None:
-                try:
-                    self.sigmas_exponential = self.scheduler_registry.get('exponential')(
-                        steps=self.steps,
-                        sigma_min=self.sigma_min,
-                        sigma_max=self.sigma_max,
-                        device=self.device,
-                        decay_pattern=self.decay_pattern
-                    )[2]
-                    print (f"loaded sigmas_exponential from scheduler_registry")
-                except:
-                    self.sigmas_exponential = None
-                    try:
-                        self.sigmas_exponential =  get_sigmas_exponential(
-                        steps=self.steps,
-                        sigma_min=self.sigma_min,
-                        sigma_max=self.sigma_max,                    
-                        device=self.device,
-                        decay_pattern=self.decay_pattern
-                        )
-                        print(f"retrieved directly from file")
-                    except Exception as e:
-                        print(f"An exception {e} occurred")
-            if self.sigmas_karras == None:
-                try:
-                    self.sigmas_karras = self.scheduler_registry.get('karras')(
-                        steps=self.steps,
-                        sigma_min=self.sigma_min,
-                        sigma_max=self.sigma_max,
-                        rho=self.rho,
-                        device=self.device,
-                        decay_pattern=self.decay_pattern
-                    )[2]
-                    print (f"loaded sigmas_karras from scheduler_registry")
-                except:
-                    self.sigmas_karras = None
-                    try:
-                        self.sigmas_karras =  get_sigmas_karras(
-                        steps=self.steps,
-                        sigma_min=self.sigma_min,
-                        sigma_max=self.sigma_max,
-                        rho=self.rho,
-                        device=self.device,
-                        decay_pattern=self.decay_pattern
-                        )
-                        print(f"retrieved directly from file")
-                    except Exception as e:
-                        print(f"An Exception {e} occurred")
-            target_length = min(len(self.sigmas_karras), len(self.sigmas_exponential))  
-            self.sigmas_karras = self.sigmas_karras[:target_length]
-            self.sigmas_exponential = self.sigmas_exponential[:target_length]
-            self.log(f"Generated sigma sequences. Karras: {self.sigmas_karras}, Exponential: {self.sigmas_exponential}")
-            
-            if self.sigmas_karras is None:
-                raise ValueError(f"Sigmas Karras:{self.sigmas_karras} Failed to generate or assign sigmas correctly.")
-            if self.sigmas_exponential is None:    
-                raise ValueError(f"Sigmas Exponential: {self.sigmas_exponential} Failed to generate or assign sigmas correctly.")
-                self.sigmas_karras = torch.zeros(self.steps).to(self.device)
-                self.sigmas_exponential = torch.zeros(self.steps).to(self.device)   
-            try:
-                pass
-            except Exception as e:
-                self.log(f"Error generating sigmas: {e}") 
-            
-            if len(self.sigmas_karras) < len(self.sigmas_exponential):
-                # Pad `sigmas_karras` with the last value
-                padding_karras = torch.full((len(self.sigmas_exponential) - len(self.sigmas_karras),), self.sigmas_karras[-1]).to(self.sigmas_karras.self.device)
-                self.sigmas_karras = torch.cat([self.sigmas_karras, padding_karras])
-            elif len(self.sigmas_karras) > len(self.sigmas_exponential):
-                # Pad `sigmas_exponential` with the last value
-                padding_exponential = torch.full((len(self.sigmas_karras) - len(self.sigmas_exponential),), self.sigmas_exponential[-1]).to(self.sigmas_exponential.device)
-                self.sigmas_exponential = torch.cat([self.sigmas_exponential, padding_exponential])
-            # Now it's safe to compute sigs        
-            start = math.log(self.sigma_max)
-            end = math.log(self.sigma_min)
-            self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()       
+        #else:
+            #logic for multiple schedulers  
+            #self.load_blend_method_sigmas(mode=self.mode)             
+        self.load_blend_method_sigmas(mode=self.mode) 
+        if self.blending_mode == 'default':
+            sigmas_a = self.sigmas_karras
+            sigmas_b = self.sigmas_exponential
+            label_a = 'Karras'
+            label_b = 'Exponential'
+            self.legacy_mode =True
+        else:
+            # Use the first two blend methods as the primary pair
+            method_a = self.blend_methods[0]
+            method_b = self.blend_methods[1]
 
-            # Ensure sigs contain valid values before using them
-            if torch.any(self.sigs > 0):  
-                self.sigma_min, self.sigma_max = self.sigs[self.sigs > 0].min(), self.sigs.max()            
-            else:
-                # If sigs are all invalid, set a safe fallback
-                self.sigma_min, self.sigma_max = self.min_threshold, self.min_threshold              
-                self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+            sigmas_a = self.sigma_sequences[method_a]['sigmas']
+            sigmas_b = self.sigma_sequences[method_b]['sigmas']
+            label_a = method_a
+            label_b = method_b
+        
+        # Validation checks
+        if sigmas_a is None:
+            raise ValueError(f"Sigmas {label_a} failed to generate or assign correctly.")
+        if sigmas_b is None:
+            raise ValueError(f"Sigmas {label_b} failed to generate or assign correctly.")
+
+        # Match target lengths
+        target_length = min(len(sigmas_a), len(sigmas_b))
+        sigmas_a = sigmas_a[:target_length]
+        sigmas_b = sigmas_b[:target_length]
+
+        # Padding if needed
+        if len(sigmas_a) < len(sigmas_b):
+            padding = torch.full((len(sigmas_b) - len(sigmas_a),), sigmas_a[-1]).to(sigmas_a.device)
+            sigmas_a = torch.cat([sigmas_a, padding])
+        elif len(sigmas_a) > len(sigmas_b):
+            padding = torch.full((len(sigmas_a) - len(sigmas_b),), sigmas_b[-1]).to(sigmas_b.device)
+            sigmas_b = torch.cat([sigmas_b, padding])
+
+        self.log(f"Generated sigma sequences. {label_a}: {sigmas_a}, {label_b}: {sigmas_b}")
+
+        
+        if self.legacy_mode==True:  
+            if self.sigmas_exponential is None:
+                self._call_legacy_mode(schedule_type='exponential')
+
+            if self.sigmas_karras is None:
+                self._call_legacy_mode(schedule_type='karras')
+
+            self.log(f"Loaded sigmas_exponential and sigmas_karras from scheduler_registry.")
+            
+        else:
+            #other scheduler logic
+            pass
+        # Now it's safe to compute sigs        
+        start = math.log(self.sigma_max)
+        end = math.log(self.sigma_min)
+        self.sigs = torch.linspace(start, end, self.steps, device=self.device).exp()       
+
+        # Ensure sigs contain valid values before using them
+        if torch.any(self.sigs > 0):  
+            self.sigma_min, self.sigma_max = self.sigs[self.sigs > 0].min(), self.sigs.max()            
+        else:
+            # If sigs are all invalid, set a safe fallback
+            self.sigma_min, self.sigma_max = self.min_threshold, self.min_threshold              
+            self.log(f"Debugging Warning: No positive sigma values found! Setting fallback sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
+              
             return {
                 'karras': self.sigmas_karras,
                 'exponential': self.sigmas_exponential,
                 'sigs': self.sigs
             }
-        else:
+       
+        sigma_lengths = [len(self.sigma_sequences[method]['sigmas']) for method in self.blend_methods]
+        if len(set(sigma_lengths)) > 1:  # There are mismatched lengths
             self.validate_and_align_sigmas()
             self.sigs = torch.zeros(self.steps, device=self.device)
             
-            return {
-                'blend_methods': self.blend_methods,
-                'all_sigmas': self.all_sigmas,
-                'sigs': self.sigs
-            }
+        return {
+            'blend_methods': self.blend_methods,
+            'all_sigmas': self.all_sigmas,
+            'sigs': self.sigs
+        }
    
 
     def call_scheduler_function(self, scheduler_func, **kwargs):
-        # Get scheduler's parameter list
+        """
+        Safely calls a scheduler function with dynamic argument filtering and flexible return handling.
+
+        This method ensures that only the parameters accepted by the scheduler function are passed.
+        It automatically handles scheduler functions that may return:
+            - Only the sigma sequence
+            - A tuple with (tails, sigmas)
+            - A tuple with (tails, decay, sigmas)
+            - A tuple with additional items (extras) before sigmas
+
+        The method always assumes the last returned item is the sigma sequence, with optional
+        items preceding it.
+
+        Parameters:
+        ----------
+        scheduler_func : callable
+            The scheduler function to be invoked. It may accept various arguments such as steps, sigma_min,
+            sigma_max, rho, device, decay_pattern, etc.
+        **kwargs : dict
+            Arbitrary keyword arguments. Only those accepted by the scheduler function will be passed.
+
+        Returns:
+        -------
+        tuple
+            A 4-tuple containing:
+                - tails : Any (optional, can be None)
+                    The tail component of the sigma schedule, if provided.
+                - decay : Any (optional, can be None)
+                    The decay component of the sigma schedule, if provided.
+                - extras : list
+                    Any additional return values provided by the scheduler function, beyond tails and decay.
+                - sigmas : Any
+                    The sigma sequence, always assumed to be the last item returned by the scheduler function.
+
+        Raises:
+        ------
+        ValueError
+            If the scheduler function returns an empty tuple.
+
+        Notes:
+        -----
+        This method allows future schedulers to return additional optional data without breaking the calling pattern.
+        """
         valid_params = inspect.signature(scheduler_func).parameters
-        # Build a filtered argument dictionary
         filtered_args = {k: v for k, v in kwargs.items() if k in valid_params}
-        # Call the scheduler with only the accepted arguments
-        return scheduler_func(**filtered_args)
+
+        result = scheduler_func(**filtered_args)
+
+        if isinstance(result, dict):
+            tails = result.get('tails', None)
+            decay = result.get('decay', None)
+            sigmas = result.get('sigmas')
+            extras = result.get('extras', [])
+
+            if sigmas is None:
+                raise ValueError("Scheduler function must return a 'sigmas' key.")
+
+            return tails, decay, extras, sigmas
+
+        # Legacy support: fallback to tuple unpacking if needed
+        if not isinstance(result, tuple):
+            return None, None, [], result
+
+        if len(result) == 0:
+            raise ValueError(f"Scheduler function returned an empty tuple. This is not allowed.")
+
+        sigmas = result[-1]
+        optional_returns = result[:-1]
+
+        tails = optional_returns[0] if len(optional_returns) > 0 else None
+        decay = optional_returns[1] if len(optional_returns) > 1 else None
+        extras = optional_returns[2:] if len(optional_returns) > 2 else []
+
+        return tails, decay, extras, sigmas
 
     def config_values(self):    
         #Ensures sigma_min is always less than sigma_max for edge cases       
@@ -1468,8 +1580,6 @@ class SimpleKEScheduler:
 
         self.log(f"Final sigmas: sigma_min={self.sigma_min}, sigma_max={self.sigma_max}")
         
-        # Other configs
-        self.sharpen_mode = self.settings.get('sharpen_mode', 'full')
         
         if self.sigma_auto_enabled:
             if self.sigma_auto_mode not in ["sigma_min", "sigma_max"]:
@@ -1494,35 +1604,43 @@ class SimpleKEScheduler:
             self.log(f"[Threshold Enforcement] sigma_max was too low: {self.sigma_max} < min_threshold {self.min_threshold}")
             self.sigma_max = self.min_threshold
         
-        self.early_stopping_method = self.settings.get("early_stopping_method", "mean")
+        
         valid_methods = ['mean', 'max', 'sum']
         if self.early_stopping_method not in valid_methods:
             self.log(f"[Config Correction] Invalid early_stopping_method: {self.early_stopping_method}. Defaulting to 'mean'.")
             self.early_stopping_method = 'mean'
        
-    def prepass_compute_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, suffix=None, skip_prepass = False)->torch.Tensor:   
+    def prepass_compute_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, suffix=None, cache_key = None, skip_prepass = False)->torch.Tensor:   
+       
+        '''
         if self.load_prepass_sigmas:
-            with open(self.cache_file.replace('.pt', '.txt'), 'r') as f:
-                loaded_data = json.load(f)
+            if cache_key:
+                self._safe_sigma_loader(cache_key)
+                #self.load_or_regenerate_sigmas(cache_key)
+                loaded_data = torch.load(self.cache_file.replace('.txt', '.pt'), map_location=self.device)
+                
+                sigmas = loaded_data['sigma_values'].to(self.device)
+                self.loaded_sigmas = sigmas  # No need to call torch.tensor again
 
-            self.loaded_sigmas = torch.tensor(loaded_data['sigma_values'])
-            loaded_hash = loaded_data['sigma_hash']
+                loaded_hash = loaded_data['sigma_hash']
 
-            steps = loaded_data['steps']
-            sigma_min = loaded_data['sigma_min']
-            sigma_max = loaded_data['sigma_max']
-            rho = loaded_data['rho']
-            device = loaded_data['device']
-            schedule_type = loaded_data['schedule_type']
-            decay_pattern = loaded_data['decay_pattern']
+                steps = loaded_data['steps']
+                sigma_min = loaded_data['sigma_min']
+                sigma_max = loaded_data['sigma_max']
+                rho = loaded_data['rho']
+                device = loaded_data['device']
+                schedule_type = loaded_data['schedule_type']
+                decay_pattern = loaded_data['decay_pattern']
 
-            restored_config = loaded_data['full_config']
+                restored_config = loaded_data['full_config']  
 
-            # Optionally overwrite current settings with restored settings
-            self.settings.update(restored_config)            
-            
-            self.load_sigmas_with_hash_validation(self, loaded_data, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, suffix=None)
-            self.log(f"[Cache Loaded] Sigma schedule, hash, and config loaded from: {self.cache_file.replace('.pt', '.txt')}")
+
+                # Optionally overwrite current settings with restored settings
+                self.settings.update(restored_config)            
+                
+               #self.load_sigmas_with_hash_validation(self, loaded_data, steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, cache_key, suffix=None)
+                self.log(f"[Cache Loaded] Sigma schedule, hash, and config loaded from: {self.cache_file.replace('.pt', '.txt')}")
+        '''
         acceptable_keys = [
             "sigma_min", "sigma_max", "start_blend", "end_blend", "sharpness",
             "early_stopping_threshold", "initial_step_size",
@@ -1543,12 +1661,12 @@ class SimpleKEScheduler:
         self.generate_sigmas_schedule(mode='prepass')
          
         self.predicted_stop_step = self.steps if None else self.original_steps
-        if self.N > len(self.sigs):
-            self.N = len(self.sigs)
-            self.log(f"[Sharpening Notice] Requested last {self.N} steps exceeds sequence length. Using entire sequence instead.")
-        self.min_visual_sigma = self.settings.get('min_visual_sigma', 10)
+        if self.sharpen_last_n_steps > len(self.sigs):
+            self.sharpen_last_n_steps = len(self.sigs)
+            self.log(f"[Sharpening Notice] Requested last {self.sharpen_last_n_steps} steps exceeds sequence length. Using entire sequence instead.")
+        
         self.visual_sigma = max(0.8, self.sigma_min * self.min_visual_sigma)
-        self.safety_minimum_stop_step = self.settings.get('safety_minimum_stop_step', 10)
+        
         self.blend_sigma_sequence(             
             sigmas_karras=None,
             sigmas_exponential=None,
@@ -1577,20 +1695,14 @@ class SimpleKEScheduler:
             for idx, (method, sigmas) in enumerate(zip(self.blend_methods, self.all_sigmas)):
                 self.log(f"Method: {method}, Sigma sequence: {sigmas}")
         
-        if self.save_sigma_cache:
-            sigma_hash = self.generate_sigma_hash(steps, sigma_min, sigma_max, rho, schedule_type, decay_pattern, suffix=None)
+        
+        '''
+        # Build cache key 
+        sigma_hash = self.generate_sigma_hash(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, suffix=None)
 
+        if self.save_prepass_sigmas:
             save_data = {
-                'sigma_values': sigmas.cpu().tolist(),  # convert to list for JSON/text saving
-                'sigma_hash': sigma_hash
-            }
-            with open(self.cache_file.replace('.pt', '.txt'), 'w') as f:
-                json.dump(save_data, f, indent=4)
-
-            self.log(f"[Cache Saved] Sigma schedule and hash saved to: {self.cache_file.replace('.pt', '.txt')}")
-        if self.settings.get('save_prepass_sigmas', False):
-            save_data = {
-                'sigma_values': sigmas.cpu().tolist(),
+                'sigma_values': sigmas.cpu(),  # Keep as tensor
                 'sigma_hash': sigma_hash,
                 'steps': steps,
                 'sigma_min': sigma_min,
@@ -1599,17 +1711,53 @@ class SimpleKEScheduler:
                 'device': device,
                 'schedule_type': schedule_type,
                 'decay_pattern': decay_pattern,
-                'full_config': json.dumps(self.settings)
+                'full_config': self.settings  # Save as raw dict
             }
-            self.final_sigma_hash = self.generate_sigma_hash(self.steps, self.sigma_min, self.sigma_max, self.rho, 'karras', self.decay_pattern, save_data, suffix='prepass')
             
-            
+            # Save directly with torch.save in .pt format
+            torch.save(save_data, self.cache_file)  # Assuming self.cache_file has .pt extension
+            self.log(f"[Sigma Saver] Final sigmas saved to: {self.cache_file}")
+        '''
+    def load_or_regenerate_sigmas(self, cache_key):
+        if self.load_sigma_cache and cache_key:
+            try:
+                loaded_data = torch.load(self.cache_file, map_location=self.device)
+                sigmas = loaded_data['sigma_values'].to(self.device)
+
+            except FileNotFoundError:
+                self.log(f"[Cache Warning] Cache file not found: {self.cache_file}")
+                self.log(f"[Cache Recovery] Automatically recomputing sigma schedule.")
+                _, _, _, sigmas = self._generate_sigmas(
+                    self.steps,
+                    self.sigma_min,
+                    self.sigma_max,
+                    self.rho,
+                    self.device,
+                    self.schedule_type,
+                    self.decay_pattern
+                )
+
+        # Recompute if cache is disabled or failed
+        _, _, _, sigmas = self._generate_sigmas(
+            self.steps,
+            self.sigma_min,
+            self.sigma_max,
+            self.rho,
+            self.device,
+            self.schedule_type,
+            self.decay_pattern
+        )
+        '''
+        if self.save_prepass_sigmas:
+            # Optional: Cache the recomputed sigma schedule
             torch.save(save_data, self.prepass_save_file)
             self.log(f"[Sigma Saver] Final sigmas saved to: {self.prepass_save_file}")
+        
+        #self.sigma_cache[cache_key] = sigmas
+        '''
+        return sigmas
 
-           
-    
-    def compute_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type=None, decay_pattern=None)->torch.Tensor:  
+    def compute_sigmas(self, steps, sigma_min, sigma_max, rho, device, schedule_type=None, decay_pattern=None, cache_key=None)->torch.Tensor:  
         """
         Scheduler function that blends sigma sequences using Karras and Exponential methods with adaptive parameters.
 
@@ -1631,31 +1779,25 @@ class SimpleKEScheduler:
             
         Returns:
             torch.Tensor: A tensor of blended sigma values.
-        """    
-        
-            
-        if self.load_sigma_cache:
-            with open(self.cache_file.replace('.pt', '.txt'), 'r') as f:
-                loaded_data = json.load(f)
-
-            self.loaded_sigmas = torch.tensor(loaded_data['sigma_values'])
-            loaded_hash = loaded_data['sigma_hash']
-
-            steps = loaded_data['steps']
-            sigma_min = loaded_data['sigma_min']
-            sigma_max = loaded_data['sigma_max']
-            rho = loaded_data['rho']
-            device = loaded_data['device']            
-            schedule_type = loaded_data['schedule_type']
-            decay_pattern = loaded_data['decay_pattern']
-            restored_config = loaded_data['full_config']
-
-            # Optionally overwrite current settings with restored settings
-            self.settings.update(restored_config)            
-            
-            self.load_sigmas_with_hash_validation(self, loaded_data, steps, sigma_min, sigma_max, rho, schedule_type, decay_pattern, suffix=None)
-            self.log(f"[Cache Loaded] Sigma schedule, hash, and config loaded from: {self.cache_file.replace('.pt', '.txt')}")
-        
+        """  
+        '''
+        if self.load_sigma_cache and cache_key:
+            sigmas = self._safe_sigma_loader(cache_key)
+            if sigmas is None:
+                self.log(f"[Cache Recovery] No valid cache found for key: {cache_key}. Recomputing sigma schedule.")
+                _, _, _, sigmas = self._generate_sigmas(
+                    self.steps,
+                    self.sigma_min,
+                    self.sigma_max,
+                    self.rho,
+                    self.device,
+                    self.schedule_type,
+                    self.decay_pattern
+                )
+            else:
+                self.log(f"[Cache Hit] Sigma schedule successfully loaded from cache.")
+                self.sigs = sigmas
+        '''        
         acceptable_keys = [
             "sigma_min", "sigma_max", "start_blend", "end_blend", "sharpness",
             "early_stopping_threshold", "initial_step_size",
@@ -1694,13 +1836,13 @@ class SimpleKEScheduler:
                 self.log(f"[Sharpen Mask] Full sharpening applied (low variance). Steps: {sharpen_indices}")
             else:
                 # Apply sharpening only to the last N steps
-                recent_sigs = self.sigs[-self.N:]
+                recent_sigs = self.sigs[-self.sharpen_last_n_steps:]
                 sharpen_mask = torch.where(recent_sigs < self.sigma_min * 1.5, self.sharpness, 1.0).to(self.device)
                 sharpen_indices = torch.where(sharpen_mask < 1.0)[0].tolist()
-                self.sigs[-self.N:] = recent_sigs * sharpen_mask
+                self.sigs[-self.sharpen_last_n_steps:] = recent_sigs * sharpen_mask
 
                 # Now loop per step if desired (safely inside this block)
-                for j in range(len(self.sigs) - self.N, len(self.sigs)):
+                for j in range(len(self.sigs) - self.sharpen_last_n_steps, len(self.sigs)):
                     if self.sigs[j] < self.sigma_min * 1.5:
                         old_value = self.sigs[j].item()
                         self.sigs[j] = self.sigs[j] * self.sharpness
@@ -1714,9 +1856,12 @@ class SimpleKEScheduler:
             sharpen_indices = torch.where(self.sharpen_mask < 1.0)[0].tolist()
             self.sigs = self.sigs * self.sharpen_mask
             self.log(f"[Sharpen Mask] Full sharpening applied at steps: {sharpen_indices}")
+        
+        '''
+        sigma_hash = self.generate_sigma_hash(steps, sigma_min, sigma_max, rho, device, schedule_type, decay_pattern, suffix=None)
         if self.settings.get('save_sigma_cache', False):
             save_data = {
-                'sigma_values': sigmas.cpu().tolist(),
+                'sigma_values': self.sigs.cpu().tolist(),
                 'sigma_hash': sigma_hash,
                 'steps': steps,
                 'sigma_min': sigma_min,
@@ -1727,10 +1872,37 @@ class SimpleKEScheduler:
                 'decay_pattern': decay_pattern,
                 'full_config': json.dumps(self.settings)
             }
-            self.final_sigma_hash = self.generate_sigma_hash(self.steps, self.sigma_min, self.sigma_max, self.rho, 'karras', self.decay_pattern, save_data, suffix='prepass')
+        
             
-            
-            torch.save(save_data, self.final_save_file)
-            self.log(f"[Sigma Saver] Final sigmas saved to: {self.final_save_file}")
+            if self.save_sigma_cache:            
+                torch.save(save_data, self.final_save_file)
+                self.log(f"[Sigma Saver] Final sigmas saved to: {self.final_save_file}")
+        '''
         #self.log(f"[DEBUG]Final Output: Skip Prepass: {self.skip_prepass}. Original requested steps: {self.original_steps}. Self.steps = {self.steps} for tensor sigs: {self.sigs})")
         return self.sigs.to(self.device)
+        
+    def get_sigma_from_cache(self, cache_key):
+        """
+        Safely retrieves a sigma sequence from cache.
+        Always returns a detached copy to prevent in-place modification of cached data.
+        """
+        if cache_key in self.sigma_cache:
+            cached_sigmas = self.sigma_cache[cache_key]
+            self.log(f"[Cache Hit] Returning cached sigma sequence for key: {cache_key}")
+
+            # If tensor, clone and detach
+            if isinstance(cached_sigmas, torch.Tensor):
+                return cached_sigmas.clone().detach().to(self.device)
+
+            # If list, deep copy
+            elif isinstance(cached_sigmas, list):
+                import copy
+                return copy.deepcopy(cached_sigmas)
+
+            # If other types, return as-is (optional: tighten later)
+            else:
+                return cached_sigmas
+
+        else:
+            self.log(f"[Cache Miss] Cache key not found: {cache_key}")
+            return None
