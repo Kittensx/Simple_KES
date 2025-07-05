@@ -1,8 +1,57 @@
 # SimpleKEScheduler
 
 **Hybrid Sigma Scheduler for Stable Diffusion**  
-_A blend of Karras & Exponential scheduling with adaptive, randomized control._
+_A fully customizable, multi-scheduler system with adaptive blending, user-friendly configuration, and support for advanced per-scheduler enhancements._
+## Overview
+- SimpleKEScheduler has evolved from a basic Karras + Exponential hybrid into a flexible, user-configurable scheduler framework that supports:
 
+- Multi-scheduler blending (beyond Karras & Exponential)
+
+- User-controlled scheduler selection and customization
+
+- Advanced blending modes and randomization techniques
+
+- Extensible scheduler registry for easy future expansion
+
+This system is designed to give users and developers precise control over the sigma schedule behavior while maintaining compatibility with major Stable Diffusion environments like A1111 and Forge (with optional features gated for safety).
+
+## Core Features
+- ✅ Blending of Multiple Schedulers
+
+- ✅ User-Facing Config for Scheduler Control
+
+- ✅ Per-Scheduler Customization
+
+- ✅ Modular Scheduler Import & Expansion
+
+- ✅ Advanced Randomization Options
+
+- ✅ Optional Prepass and Early Stopping (Experimental)
+
+- ✅ Optional Auto-Stabilization (Environment-Gated)
+
+- ✅ Sigma Plotting and Detailed Logging
+
+- ✅ Optional Tail and Decay Extensions (Compatibility Aware)
+## Purpose
+### SimpleKEScheduler empowers both users and developers to:
+
+- Experiment with custom scheduler blends.
+
+- Adjust and randomize scheduler behavior directly from configuration files.
+
+- Extend the system with new scheduling algorithms quickly.
+
+_It is a powerful scheduling backbone that can grow with evolving diffusion needs, providing a more flexible alternative to rigid, single-scheduler pipelines._
+## Developer Highlights
+### Easily Add New Schedulers:
+- Drop-in compatibility via the scheduler map and standardized return signatures.
+
+- User Config-Driven:
+Scheduler selection, blending weights, and method-specific options are easily user-tuned.
+
+- Environment Safe:
+Step expansion and caching are gated to prevent conflicts in restricted environments like A1111/Forge.
 
 # SimpleKEScheduler — Major Update
 ## Version 1.3 Changelog Update 7/5/2025
