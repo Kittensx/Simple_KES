@@ -4,7 +4,116 @@
 _A blend of Karras & Exponential scheduling with adaptive, randomized control._
 
 
+# SimpleKEScheduler — Major Update
+## Version 1.3 Changelog Update 7/5/2025
+This update brings a **significant overhaul** to the SimpleKEScheduler, focusing on flexibility, modularity, and user-friendly customization. The system now supports easy scheduler blending, user-facing configuration files, and rapid scheduler expansion.
+
 ---
+
+## Key Highlights
+
+### User Configuration System
+- **New `user_config.yaml`** allows users to override default settings without touching the core files.
+- Users can now:
+  - Easily switch schedulers.
+  - Adjust blend methods and weights.
+  - Customize scheduler-specific options.
+- Designed for **rapid iteration and experimentation**.
+- Includes a folder with example configuration of scheduler blends (not fully tested)
+
+---
+
+### Multi-Scheduler Blending
+- **Supports blending**:
+  - Two schedulers (smooth blend).
+  - More than two schedulers (weighted blend).
+  - Single scheduler with enhanced controls.
+- Blending Modes:
+  - `default`: Karras + Exponential
+  - `smooth_blend`: Smooth scheduler transitions
+  - `weights`: Multi-scheduler blending with custom weights
+- Scheduler-specific blending weights can be configured per scheduler in the user config.
+
+---
+
+### Extensible Scheduler Registry
+- **Easy to add new schedulers:**
+  - Register in `scheduler_registry`.
+  - Match the return structure.
+  - Optionally define user-config options.
+- Supports: Karras, Exponential, Geometric, Harmonic, Logarithmic, Euler, Euler Advanced (and more can be added).
+
+---
+
+### Prepass and Early Stopping (Experimental)
+- Prepass blending system for predicting early stopping is **partially implemented but not fully production-ready.**
+- Detailed logging and convergence analysis are in place for future refinement.
+
+---
+
+### Auto-Stabilization System (Feature-Gated)
+- Auto-stabilization tested **functional but is not compatible with A1111/Forge** due to step count restrictions.
+- Feature is safely gated to disable when incompatible (steps cannot exceed user-requested count in A1111/Forge).
+- Supports:
+  - Smooth interpolation
+  - Tail appending
+  - Decay blending
+  - Progressive decay
+
+---
+
+### Randomization System (Improved)
+- Carried over from the old version.
+- Supports:
+  - Min/Max range randomization
+  - Symmetric, Asymmetric, Logarithmic, Exponential types
+- Now fully integrated with the user config and schema validation.
+
+---
+
+### Caching System (Tested, Disabled)
+- Functional **torch-based caching system was developed and tested.**
+- Disabled due to A1111/Forge rejecting torch save/load operations as unsafe.
+- If supported by other environments, the caching system can be re-enabled.
+
+---
+
+### Logging and Sigma Plotting
+- Supports **dedicated logging** for both prepass and final generation steps.
+- Logs scheduler "extras" for advanced debugging.
+- Optional sigma plotting using `plot_sigma_sequence.py` with early stopping markers.
+
+---
+
+### Additional Features
+- Sharpening modes:
+  - Full sequence sharpening
+  - Last N steps sharpening
+- Fully validated sigma sequence alignment across all schedulers.
+- Dynamic file naming and version-controlled caches (disabled in A1111).
+
+---
+
+## Compatibility Notes
+- **A1111/Forge Limitations:**
+  - Step expansion is not supported. Auto-stabilization and tail extensions are gated to avoid exceeding requested steps.
+  - Sigma caching is commented out to prevent compatibility issues with torch-based file loading.
+
+---
+
+## Developer Notes
+- **Adding a New Scheduler:**
+  1. Add scheduler function to `scheduler_registry`.
+  2. Ensure return signature matches expected format.
+  3. Define user-facing settings in `user_config.yaml`.
+
+---
+
+## Closing Summary
+This version transforms SimpleKEScheduler into a **powerful, flexible, and easy-to-extend system.**  
+The user configuration and modular scheduler map make it ideal for both power users and developers who want to quickly prototype or expand the system.
+
+
 
 ## 📌 What is it?
 
