@@ -1,0 +1,18 @@
+blend_methods:
+  euler_advanced:
+    weight: 0.4
+    decay_pattern: 'logarithmic'
+    decay_mode: 'blend'
+    tail_steps: 1
+
+  harmonic:
+    weight: 0.4
+    decay_pattern: 'linear'
+    decay_mode: 'blend'
+    tail_steps: 1
+
+  karras:
+    weight: 0.5
+    decay_pattern: 'exponential'
+    decay_mode: 'blend'
+    tail_steps: 1
