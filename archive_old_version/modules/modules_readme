@@ -1,4 +1,0 @@
-@Readme
-Note: Simple_KES was designed to work with Automatic1111. You can modify the code to work with your individual program (if the program is not opensource or downloadable and plugin friendly, you will have to wait for this to be added by the software developer).
-
-Add these files to your modules folder. Ensure that you update sd_schedulers.py to ensure that the scheduler can be found in the schedulers map. 
