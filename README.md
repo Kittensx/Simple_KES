@@ -1,4 +1,9 @@
 # SimpleKEScheduler
+## License added 7/18/2025 previous versions 
+Creative Commons Attribution-NonCommercial 4.0 International
+Simple KES © 2025 by Kittensx is licensed under CC BY-NC 4.0. To view a copy of this license, visit https://creativecommons.org/licenses/by-nc/4.0/
+
+Note:Previous versions of Simple KES did not have permissions granted to copy, modify, redistribute or use commerically or non commercially meaning, that the code was all rights reserved under copyright law by default. 
 
 **Hybrid Sigma Scheduler for Stable Diffusion**  
 _A fully customizable, multi-scheduler system with adaptive blending, user-friendly configuration, and support for advanced per-scheduler enhancements._
