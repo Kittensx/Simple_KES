@@ -3,7 +3,11 @@ These are only suggested configurations. To give you a starting point for your c
 
 Do not make changes to the default_config file unless you know what you're doing. If you do decide to tweak it, please copy it so you can revert changes if needed. 
 
-The best way is to copy whatever configuration changes from the default_config into the user_config since any values in the user_config will override the default_config when the program runs. This means you should never need to change the default_config. I've kept my user_config pretty basic and I've kept the default_config as is. Should you want to edit your user_config with advanced settings you can find those advanced settings inside the default_config. The files in this folder have suggested values for different scheduler combinations **ONLY**.
+The best way is to copy whatever configuration changes from the default_config into the user_config since any values in the user_config will override the default_config when the program runs. This means you should never need to change the default_config. 
+
+I've kept my user_config pretty basic and I've kept the default_config as is. Should you want to edit your user_config with advanced settings you can find those advanced settings inside the default_config. 
+
+The files in the "suggested_scheduling_configs" folder have suggested values for different scheduler combinations **ONLY**.
   
 Simple replace in line or completely your user_config yaml with the suggested config. Tweak as needed. 
 
