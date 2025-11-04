@@ -1,4 +1,0 @@
-torch
-pyyaml
-numpy
-matplotlib
